@@ -13,6 +13,8 @@ class TmuxInjector {
         this.log = logger || console;
         this.sessionName = sessionName || 'claude-taskping';
         this.logFile = path.join(__dirname, '../logs/tmux-injection.log');
+        this.isWindows = false;
+        this.isWSL = false;
         this.ensureLogDir();
     }
     
@@ -26,9 +28,27 @@ class TmuxInjector {
     // Check if tmux is installed
     async checkTmuxAvailable() {
         return new Promise((resolve) => {
-            exec('which tmux', (error) => {
-                resolve(!error);
-            });
+            const platform = process.platform;
+            
+            if (platform === 'win32') {
+                // On Windows, check for WSL or tmux alternatives
+                exec('wsl tmux -V', (wslError) => {
+                    if (!wslError) {
+                        this.isWSL = true;
+                        this.log.info('Using tmux via WSL');
+                        resolve(true);
+                    } else {
+                        // Try checking for PowerShell (always available on Windows)
+                        this.log.info('tmux not available on Windows, using PowerShell alternative');
+                        this.isWindows = true;
+                        resolve(true); // PowerShell is always available
+                    }
+                });
+            } else {
+                exec('which tmux', (error) => {
+                    resolve(!error);
+                });
+            }
         });
     }
     
@@ -79,23 +99,39 @@ class TmuxInjector {
     }
     
     // Inject command into tmux session (intelligently handle Claude confirmations)
-    async injectCommand(command) {
+    async injectCommand(sessionName, command) {
         return new Promise(async (resolve) => {
             try {
+                // Check platform and tmux availability first
+                const tmuxAvailable = await this.checkTmuxAvailable();
+                
+                this.log.debug(`Injecting command via ${this.isWindows ? 'PowerShell' : 'tmux'}: ${sessionName}`);
+                
+                if (this.isWindows || !tmuxAvailable) {
+                    // Windows fallback: Use clipboard + notification approach
+                    const result = await this.injectCommandWindows(command);
+                    resolve(result);
+                    return;
+                }
+                
+                // Original tmux logic for Unix systems
+                const tmuxSession = sessionName || this.sessionName;
+                
                 // 1. Clear input field
-                const clearCommand = `tmux send-keys -t ${this.sessionName} C-u`;
+                const clearCommand = this.isWSL ? 
+                    `wsl tmux send-keys -t ${tmuxSession} C-u` :
+                    `tmux send-keys -t ${tmuxSession} C-u`;
                 
                 // 2. Send command
                 const escapedCommand = command.replace(/'/g, "'\"'\"'");
-                const sendCommand = `tmux send-keys -t ${this.sessionName} '${escapedCommand}'`;
+                const sendCommand = this.isWSL ?
+                    `wsl tmux send-keys -t ${tmuxSession} '${escapedCommand}'` :
+                    `tmux send-keys -t ${tmuxSession} '${escapedCommand}'`;
                 
                 // 3. Send enter
-                const enterCommand = `tmux send-keys -t ${this.sessionName} C-m`;
-                
-                this.log.debug(`Injecting command via tmux: ${command}`);
-                // this.log.debug(`Step 1 - Clear: ${clearCommand}`);
-                // this.log.debug(`Step 2 - Send: ${sendCommand}`);
-                // this.log.debug(`Step 3 - Enter: ${enterCommand}`);
+                const enterCommand = this.isWSL ?
+                    `wsl tmux send-keys -t ${tmuxSession} C-m` :
+                    `tmux send-keys -t ${tmuxSession} C-m`;
                 
                 // Execute three steps
                 exec(clearCommand, (clearError) => {
@@ -151,6 +187,63 @@ class TmuxInjector {
                 resolve({ success: false, error: error.message });
             }
         });
+    }
+    
+    // Windows-specific command injection using Claude headless mode
+    async injectCommandWindows(command) {
+        try {
+            this.log.info('Windows detected: Using Claude headless mode');
+            
+            // Execute Claude command using configured path
+            const claudePath = process.env.CLAUDE_CLI_PATH || 'claude';
+            const claudeCommand = `${claudePath} "${command.replace(/"/g, '\\"')}" -p`;
+            
+            this.log.debug(`Executing: ${claudeCommand}`);
+            
+            return new Promise((resolve) => {
+                const childProcess = exec(claudeCommand, {
+                    cwd: process.cwd(),
+                    env: process.env,
+                    encoding: 'utf8'
+                }, (error, stdout, stderr) => {
+                    if (error) {
+                        this.log.error(`Claude execution failed: ${error.message}`);
+                        
+                        // Check if it's an authentication issue
+                        if (stderr.includes('Invalid API key') || stderr.includes('Please run /login')) {
+                            resolve({ 
+                                success: false, 
+                                error: 'authentication_required',
+                                message: 'Claude authentication required. Please run: claude --login'
+                            });
+                        } else {
+                            resolve({ 
+                                success: false, 
+                                error: error.message,
+                                message: `Claude execution failed: ${error.message}`
+                            });
+                        }
+                    } else {
+                        this.log.info('Claude command executed successfully');
+                        this.log.debug(`Claude output: ${stdout}`);
+                        
+                        resolve({ 
+                            success: true, 
+                            method: 'headless', 
+                            message: 'Command executed via Claude headless mode',
+                            output: stdout
+                        });
+                    }
+                });
+                
+                // Log the process start
+                this.log.debug(`Started Claude process with PID: ${childProcess.pid}`);
+            });
+            
+        } catch (error) {
+            this.log.error(`Windows injection failed: ${error.message}`);
+            return { success: false, error: error.message };
+        }
     }
     
     // Automatically handle Claude confirmation dialogs
@@ -379,7 +472,7 @@ class TmuxInjector {
             }
             
             // 3. Inject command
-            const injectResult = await this.injectCommand(command);
+            const injectResult = await this.injectCommand(this.sessionName, command);
             
             if (injectResult.success) {
                 // 4. Send success notification

@@ -10,7 +10,6 @@ const envPath = path.join(__dirname, '../../.env');
 require('dotenv').config({ path: envPath });
 const Imap = require('node-imap');
 const { simpleParser } = require('mailparser');
-const { spawn } = require('node-pty');
 const { existsSync, readFileSync, writeFileSync } = require('fs');
 const pino = require('pino');
 
