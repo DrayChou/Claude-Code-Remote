@@ -13,12 +13,14 @@ require('dotenv').config({ path: envPath });
 const Logger = require('./src/core/logger');
 const Notifier = require('./src/core/notifier');
 const ConfigManager = require('./src/core/config');
+const PidManager = require('./src/utils/pid-manager');
 
 class ClaudeCodeRemoteCLI {
     constructor() {
         this.logger = new Logger('CLI');
         this.config = new ConfigManager();
         this.notifier = new Notifier(this.config);
+        this.pidManager = new PidManager('claude-remote-relay');
     }
 
     async init() {
@@ -81,6 +83,9 @@ class ClaudeCodeRemoteCLI {
                     break;
                 case 'diagnose':
                     await this.handleDiagnose(args.slice(1));
+                    break;
+                case 'cleanup':
+                    await this.handleCleanup(args.slice(1));
                     break;
                 case '--help':
                 case '-h':
@@ -316,9 +321,9 @@ class ClaudeCodeRemoteCLI {
 
     async handleConfig(args) {
         // Launch the configuration tool
-        const ConfigTool = require('./src/tools/config-manager');
-        const configTool = new ConfigTool(this.config);
-        await configTool.run(args);
+        const ConfigTool = require('./src/config-manager');
+        const configTool = new ConfigTool();
+        await configTool.interactiveMenu();
     }
 
     async handleInstall(args) {
@@ -358,63 +363,135 @@ class ClaudeCodeRemoteCLI {
 
     async startRelay(args) {
         try {
-            const CommandRelayService = require('./src/relay/command-relay');
-            const emailConfig = this.config.getChannel('email');
+            // 使用PidManager清理旧进程
+            console.log('🔍 Checking for existing relay processes...');
+            if (this.pidManager.hasRunningInstances()) {
+                console.log('⚡ Found running relay processes, cleaning up...');
+                this.pidManager.cleanupOldProcesses();
+            }
             
-            if (!emailConfig || !emailConfig.enabled) {
-                console.error('❌ Email channel not configured or disabled');
-                console.log('Please run first: claude-remote config');
+            // 注册当前进程
+            this.pidManager.registerCurrentProcess({
+                command: 'relay start'
+            });
+            
+            this.logger.info('🚀 Starting Claude Code Remote multi-channel relay service...');
+            
+            // Check if any listening channels are configured
+            const hasListeningChannels = Array.from(this.notifier.channels.values())
+                .some(channel => channel.capabilities && channel.capabilities.canReceive && channel.enabled);
+            
+            if (!hasListeningChannels) {
+                console.error('❌ No listening channels configured');
+                console.log('Please configure at least one listening channel:');
+                console.log('  • Email: claude-remote setup-email');
+                console.log('  • Telegram: Edit config/channels.json and add telegram configuration');
+                console.log('  • Or run: claude-remote config');
                 process.exit(1);
             }
 
-            console.log('🚀 Starting email command relay service...');
+            // Show which channels will be listening
+            const listeningChannelNames = Array.from(this.notifier.channels.entries())
+                .filter(([name, channel]) => channel.capabilities && channel.capabilities.canReceive && channel.enabled)
+                .map(([name]) => name);
             
-            const relayService = new CommandRelayService(emailConfig.config);
+            console.log(`📡 Will start listening on: ${listeningChannelNames.join(', ')}`);
+            console.log('💡 You can now remotely execute Claude Code commands via these channels');
+            console.log('');
+
+            // Setup graceful shutdown first
+            let isShuttingDown = false;
+            const shutdown = async (signal) => {
+                if (isShuttingDown) {
+                    this.logger.warn('🔄 Shutdown already in progress, ignoring additional signal');
+                    return;
+                }
+                
+                isShuttingDown = true;
+                this.logger.info(`\n🛑 Received ${signal}, shutting down gracefully...`);
+                
+                const shutdownTimeout = setTimeout(() => {
+                    this.logger.error('⏰ Shutdown timeout reached, forcing exit');
+                    process.exit(1);
+                }, 10000); // 10秒超时
+                
+                try {
+                    if (this.notifier) {
+                        await this.notifier.stopListening();
+                        this.logger.info('✅ All channels stopped');
+                    }
+                    
+                    clearTimeout(shutdownTimeout);
+                    this.logger.info('🏁 Graceful shutdown completed');
+                    process.exit(0);
+                } catch (error) {
+                    clearTimeout(shutdownTimeout);
+                    this.logger.error('❌ Error during shutdown:', error.message);
+                    process.exit(1);
+                }
+            };
+
+            process.on('SIGINT', () => shutdown('SIGINT'));
+            process.on('SIGTERM', () => shutdown('SIGTERM'));
             
-            // Listen for events
-            relayService.on('started', () => {
-                console.log('✅ Command relay service started');
-                console.log('📧 Listening for email replies...');
-                console.log('💡 You can now remotely execute Claude Code commands by replying to emails');
-                console.log('');
-                console.log('Press Ctrl+C to stop the service');
+            process.on('uncaughtException', (error) => {
+                this.logger.error('Uncaught exception:', error);
+                shutdown('uncaughtException');
+            });
+            
+            process.on('unhandledRejection', (reason) => {
+                this.logger.error('Unhandled rejection:', reason);
+                shutdown('unhandledRejection');
             });
 
-            relayService.on('commandQueued', (command) => {
-                console.log(`📨 Received new command: ${command.command.substring(0, 50)}...`);
-            });
-
-            relayService.on('commandExecuted', (command) => {
-                console.log(`✅ Command executed successfully: ${command.id}`);
-            });
-
-            relayService.on('commandFailed', (command, error) => {
-                console.log(`❌ Command execution failed: ${command.id} - ${error.message}`);
-            });
-
-            // Handle graceful shutdown
-            process.on('SIGINT', async () => {
-                console.log('\n🛑 Stopping command relay service...');
-                await relayService.stop();
-                console.log('✅ Service stopped');
+            // Start listening on all channels
+            await this.notifier.startListening();
+            
+            console.log('✅ Multi-channel relay service started');
+            console.log('📡 Listening for commands on all configured channels...');
+            console.log('');
+            console.log('Press Ctrl+C to stop the service');
+            
+            // 设置优雅退出处理
+            const gracefulShutdown = (signal) => {
+                console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
+                this.pidManager.cleanup();
                 process.exit(0);
-            });
-
-            // Start service
-            await relayService.start();
+            };
+            
+            process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+            process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+            process.on('SIGHUP', () => gracefulShutdown('SIGHUP'));
             
             // Keep process running
             process.stdin.resume();
             
         } catch (error) {
-            console.error('❌ Failed to start relay service:', error.message);
+            this.logger.error('❌ Failed to start relay service:', error.message);
             process.exit(1);
         }
     }
 
     async stopRelay(args) {
-        console.log('💡 Command relay service usually stopped with Ctrl+C');
-        console.log('If the service is still running, please find the corresponding process and terminate it manually');
+        if (!this.pidManager.hasRunningInstances()) {
+            console.log('❌ Claude-Code-Remote relay is not running');
+            return;
+        }
+
+        try {
+            console.log('🛑 Stopping Claude-Code-Remote relay...');
+            
+            // 使用PidManager清理所有相关进程
+            this.pidManager.cleanupOldProcesses();
+            
+            console.log('✅ Claude-Code-Remote relay stopped');
+        } catch (error) {
+            console.error('❌ Failed to stop relay:', error.message);
+            
+            // 强制清理PID文件
+            this.pidManager.cleanup();
+            console.log('🧹 PID file cleaned up');
+        }
     }
 
     async relayStatus(args) {
@@ -957,6 +1034,86 @@ class ClaudeCodeRemoteCLI {
         await diagnostic.runDiagnostic();
     }
 
+    async handleCleanup(args) {
+        console.log('🧹 Cleaning up Claude Code Remote processes...');
+        
+        try {
+            // 检查正在运行的Node.js进程
+            const { execSync } = require('child_process');
+            
+            // Windows 命令查找相关进程
+            try {
+                const tasklist = execSync('tasklist /FI "IMAGENAME eq node.exe" /FO CSV', { 
+                    encoding: 'utf8',
+                    shell: 'cmd.exe'
+                });
+                const lines = tasklist.split('\n').slice(1); // 跳过标题行
+                
+                let foundProcesses = 0;
+                
+                // 获取当前进程的命令行，查找claude-remote相关进程
+                const wmic = execSync('wmic process where "name=\'node.exe\'" get ProcessId,CommandLine /format:csv', { 
+                    encoding: 'utf8',
+                    shell: 'cmd.exe' 
+                });
+                
+                const wmicLines = wmic.split('\n');
+                for (const line of wmicLines) {
+                    if (line.includes('claude-remote') && line.includes('node.exe')) {
+                        const parts = line.split(',');
+                        if (parts.length >= 3) {
+                            const pid = parts[2].trim();
+                            if (pid && pid !== process.pid.toString()) {
+                                console.log(`🔍 Found claude-remote process: PID ${pid}`);
+                                foundProcesses++;
+                                
+                                try {
+                                    execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' });
+                                    console.log(`✅ Terminated process ${pid}`);
+                                } catch (error) {
+                                    console.log(`⚠️  Failed to terminate process ${pid}: ${error.message}`);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (foundProcesses === 0) {
+                    console.log('✅ No other claude-remote processes found');
+                } else {
+                    console.log(`🧹 Cleanup completed: ${foundProcesses} processes handled`);
+                }
+                
+            } catch (error) {
+                console.log('⚠️  Unable to check processes:', error.message);
+                console.log('💡 You can manually check for node.js processes with: tasklist | findstr node');
+            }
+            
+            // 清理可能的锁文件或状态文件
+            const fs = require('fs');
+            const path = require('path');
+            
+            const tempFiles = [
+                path.join(__dirname, 'src/data/claude-remote.pid'),
+                path.join(process.cwd(), '.claude-remote.lock')
+            ];
+            
+            for (const file of tempFiles) {
+                if (fs.existsSync(file)) {
+                    fs.unlinkSync(file);
+                    console.log(`🗑️  Removed ${file}`);
+                }
+            }
+            
+            console.log('✅ Cleanup completed successfully');
+            
+        } catch (error) {
+            console.error('❌ Cleanup failed:', error.message);
+            process.exit(1);
+        }
+    }
+
+
     showHelp() {
         console.log(`
 Claude-Code-Remote - Claude Code Smart Notification System
@@ -972,6 +1129,8 @@ Commands:
   edit-config <type>      Edit configuration files directly
   install                 Install and configure Claude Code hooks
   relay <subcommand>      Manage email command relay service
+  cleanup                 Clean up stuck processes and temporary files
+  diagnose                Run system diagnostics
   daemon <subcommand>     Manage background daemon service
   commands <subcommand>   Manage email commands and bridge
   test-paste [command]    Test automatic paste functionality

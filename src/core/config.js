@@ -96,10 +96,13 @@ class ConfigManager {
             },
             telegram: {
                 type: 'chat',
-                enabled: false,
+                enabled: process.env.TELEGRAM_BOT_TOKEN ? true : false,
                 config: {
-                    token: '',
-                    chatId: ''
+                    botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+                    chatId: process.env.TELEGRAM_CHAT_ID || '',
+                    groupId: process.env.TELEGRAM_GROUP_ID || '',
+                    whitelist: process.env.TELEGRAM_WHITELIST ? process.env.TELEGRAM_WHITELIST.split(',') : [],
+                    pollingInterval: parseInt(process.env.TELEGRAM_POLLING_INTERVAL) || 1000
                 }
             }
         };
