@@ -76,22 +76,40 @@ class DesktopChannel extends NotificationChannel {
 
     _sendWindows(title, message, sound) {
         try {
-            const script = `
-            [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-            $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-            $xml = [xml] $template.GetXml()
-            $xml.toast.visual.binding.text[0].AppendChild($xml.CreateTextNode("${title}")) > $null
-            $xml.toast.visual.binding.text[1].AppendChild($xml.CreateTextNode("${message}")) > $null
-            $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-            [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Claude-Code-Remote").Show($toast)
-            `;
-            
-            execSync(`powershell -Command "${script}"`, { timeout: 5000 });
-            this._playSound(sound);
-            return true;
+            // 方法1: 使用简单的msg命令 (更兼容，支持中文)
+            try {
+                const escapedTitle = title.replace(/"/g, '""');
+                const escapedMessage = message.replace(/"/g, '""');
+                execSync(`msg * /TIME:10 "${escapedTitle}: ${escapedMessage}"`, { 
+                    timeout: 5000,
+                    encoding: 'utf8' 
+                });
+                this._playSound(sound);
+                return true;
+            } catch (msgError) {
+                // 方法2: 使用PowerShell MessageBox (UTF-8编码)
+                const escapedTitle = title.replace(/"/g, '""').replace(/'/g, "''");
+                const escapedMessage = message.replace(/"/g, '""').replace(/'/g, "''");
+                
+                const script = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('${escapedMessage}', '${escapedTitle}', 'OK', 'Information')`;
+                
+                execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${script}"`, { 
+                    timeout: 5000,
+                    encoding: 'utf8'
+                });
+                this._playSound(sound);
+                return true;
+            }
         } catch (error) {
-            this.logger.error('Windows notification failed:', error.message);
-            return false;
+            // 方法3: 最后备用方案 - 简单的console输出
+            try {
+                console.log(`\n🔔 ${title}\n💬 ${message}\n`);
+                this._playSound(sound);
+                return true;
+            } catch (fallbackError) {
+                this.logger.error('All Windows notification methods failed:', error.message);
+                return false;
+            }
         }
     }
 

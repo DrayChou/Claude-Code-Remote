@@ -12,6 +12,8 @@ class Notifier {
         this.config = configManager || new ConfigManager();
         this.channels = new Map();
         this.i18n = null;
+        this.isListening = false;
+        this.listeningChannels = new Set();
         
         this._loadI18n();
     }
@@ -50,10 +52,115 @@ class Notifier {
             this.registerChannel('email', email);
         }
 
-        // TODO: Load other channels based on configuration
-        // Discord, Telegram, etc.
+        // Load Telegram channel
+        const TelegramChannel = require('../channels/chat/telegram');
+        const telegramConfig = this.config.getChannel('telegram');
+        if (telegramConfig && telegramConfig.enabled) {
+            const telegram = new TelegramChannel(telegramConfig.config || {});
+            this.registerChannel('telegram', telegram);
+        }
 
         this.logger.info(`Initialized ${this.channels.size} channels`);
+    }
+
+    /**
+     * Start listening on all channels that support receiving messages
+     */
+    async startListening() {
+        if (this.isListening) {
+            this.logger.warn('Already listening on channels');
+            return;
+        }
+
+        this.logger.info('🎧 Starting multi-channel listening...');
+        
+        const listeningPromises = [];
+        
+        for (const [name, channel] of this.channels) {
+            if (channel.capabilities && channel.capabilities.canReceive) {
+                this.logger.info(`📡 Starting listener for ${name} channel...`);
+                
+                listeningPromises.push(
+                    channel.startListening()
+                        .then(() => {
+                            this.listeningChannels.add(name);
+                            this.logger.info(`✅ ${name} channel listening`);
+                        })
+                        .catch(error => {
+                            this.logger.error(`❌ Failed to start ${name} listener:`, error.message);
+                        })
+                );
+            } else {
+                this.logger.debug(`📤 ${name} channel is send-only, skipping listener`);
+            }
+        }
+
+        await Promise.allSettled(listeningPromises);
+        
+        this.isListening = true;
+        this.logger.info(`📡 ${this.listeningChannels.size} channels listening, ${this.channels.size - this.listeningChannels.size} send-only`);
+        
+        // Show periodic status
+        this._startStatusReporting();
+    }
+
+    /**
+     * Stop listening on all channels
+     */
+    async stopListening() {
+        if (!this.isListening) {
+            this.logger.warn('Not currently listening');
+            return;
+        }
+
+        this.logger.info('🔇 Stopping multi-channel listening...');
+        
+        const stoppingPromises = [];
+        
+        for (const [name, channel] of this.channels) {
+            if (this.listeningChannels.has(name)) {
+                stoppingPromises.push(
+                    channel.stopListening()
+                        .then(() => {
+                            this.listeningChannels.delete(name);
+                            this.logger.info(`✅ ${name} channel stopped`);
+                        })
+                        .catch(error => {
+                            this.logger.error(`❌ Error stopping ${name}:`, error.message);
+                        })
+                );
+            }
+        }
+
+        await Promise.allSettled(stoppingPromises);
+        
+        this.isListening = false;
+        this._stopStatusReporting();
+        this.logger.info('✅ All channels stopped');
+    }
+
+    /**
+     * Start periodic status reporting
+     */
+    _startStatusReporting() {
+        if (this.statusInterval) return;
+        
+        this.statusInterval = setInterval(() => {
+            const totalMessages = Array.from(this.channels.values())
+                .reduce((sum, channel) => sum + (channel.statistics?.messagesReceived || 0), 0);
+                
+            this.logger.info(`📡 ${this.listeningChannels.size} channels listening, ${totalMessages} total messages`);
+        }, 30000); // Every 30 seconds
+    }
+
+    /**
+     * Stop periodic status reporting
+     */
+    _stopStatusReporting() {
+        if (this.statusInterval) {
+            clearInterval(this.statusInterval);
+            this.statusInterval = null;
+        }
     }
 
     /**
@@ -100,6 +207,68 @@ class Notifier {
             success: successCount > 0,
             results,
             notification
+        };
+    }
+
+    /**
+     * Send notification to specific channels based on session origin
+     * @param {string} type - Notification type: 'completed' | 'waiting'
+     * @param {Object} metadata - Additional metadata with sessionOrigin
+     * @returns {Promise<Object>} Results from targeted channels
+     */
+    async notifyToOrigin(type, metadata = {}) {
+        if (!this.config.get('enabled', true)) {
+            this.logger.debug('Notifications disabled');
+            return { success: false, reason: 'disabled' };
+        }
+
+        const notification = this._buildNotification(type, metadata);
+        const sessionOrigin = metadata.sessionOrigin || 'all';
+        
+        this.logger.info(`Sending ${type} notification to origin: ${sessionOrigin} for project: ${notification.project}`);
+
+        const results = {};
+        const promises = [];
+
+        // Determine target channels based on session origin
+        let targetChannels = [];
+        
+        if (sessionOrigin === 'email') {
+            targetChannels = ['email', 'desktop'];
+        } else if (sessionOrigin === 'telegram') {
+            targetChannels = ['telegram', 'desktop'];
+        } else {
+            // Default: send to all channels
+            targetChannels = Array.from(this.channels.keys());
+        }
+
+        // Send to target channels
+        for (const [name, channel] of this.channels) {
+            if (channel.enabled && targetChannels.includes(name)) {
+                promises.push(
+                    channel.send(notification)
+                        .then(success => ({ name, success }))
+                        .catch(error => ({ name, success: false, error: error.message }))
+                );
+            } else {
+                results[name] = { success: false, reason: targetChannels.includes(name) ? 'disabled' : 'not-targeted' };
+            }
+        }
+
+        // Wait for all channels to complete
+        const channelResults = await Promise.all(promises);
+        channelResults.forEach(result => {
+            results[result.name] = result;
+        });
+
+        const successCount = Object.values(results).filter(r => r.success).length;
+        this.logger.info(`Notification sent to ${successCount}/${targetChannels.length} targeted channels`);
+
+        return {
+            success: successCount > 0,
+            results,
+            notification,
+            targetChannels
         };
     }
 

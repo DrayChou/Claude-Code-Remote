@@ -62,7 +62,7 @@ class EmailChannel extends NotificationChannel {
         }
 
         try {
-            this.transporter = nodemailer.createTransport({
+            const transporterConfig = {
                 host: this.config.smtp.host,
                 port: this.config.smtp.port,
                 secure: this.config.smtp.secure || false,
@@ -74,12 +74,51 @@ class EmailChannel extends NotificationChannel {
                 connectionTimeout: parseInt(process.env.SMTP_TIMEOUT) || 10000,
                 greetingTimeout: parseInt(process.env.SMTP_TIMEOUT) || 10000,
                 socketTimeout: parseInt(process.env.SMTP_TIMEOUT) || 10000
-            });
+            };
+
+            // 添加代理支持
+            const proxyConfig = this._setupProxy();
+            if (proxyConfig) {
+                transporterConfig.proxy = proxyConfig;
+                
+                // 当使用代理时，忽略 SSL 证书验证
+                transporterConfig.tls = {
+                    rejectUnauthorized: false
+                };
+                
+                this.logger.debug('🔓 SSL certificate verification disabled for SMTP proxy connection');
+            }
+
+            this.transporter = nodemailer.createTransport(transporterConfig);
 
             this.logger.debug('Email transporter initialized');
         } catch (error) {
             this.logger.error('Failed to initialize email transporter:', error.message);
         }
+    }
+
+    _setupProxy() {
+        // 只使用 HTTP_PROXY 环境变量
+        const proxyUrl = process.env.HTTP_PROXY || process.env.http_proxy;
+        
+        if (proxyUrl) {
+            // 隐藏用户名密码的显示版本
+            const displayUrl = proxyUrl.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@');
+            this.logger.info(`🌐 Using proxy for SMTP: ${displayUrl}`);
+            
+            try {
+                const url = new URL(proxyUrl);
+                
+                // nodemailer 使用 URL 字符串格式的代理配置
+                return proxyUrl;
+                
+            } catch (error) {
+                this.logger.error(`❌ Invalid proxy URL: ${proxyUrl}`, error.message);
+                return null;
+            }
+        }
+        
+        return null;
     }
 
     _getCurrentTmuxSession() {
