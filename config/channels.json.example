@@ -1,0 +1,27 @@
+{
+  "desktop": {
+    "type": "local",
+    "enabled": true,
+    "config": {}
+  },
+  "email": {
+    "type": "email",
+    "enabled": false
+  },
+  "discord": {
+    "type": "discord",
+    "enabled": false
+  },
+  "telegram": {
+    "type": "telegram",
+    "enabled": false
+  },
+  "whatsapp": {
+    "type": "whatsapp",
+    "enabled": false
+  },
+  "feishu": {
+    "type": "feishu",
+    "enabled": false
+  }
+}

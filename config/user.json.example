@@ -1,0 +1,14 @@
+{
+  "language": "zh-CN",
+  "sound": {
+    "completed": "Submarine",
+    "waiting": "Hero"
+  },
+  "enabled": true,
+  "timeout": 5,
+  "customMessages": {
+    "completed": null,
+    "waiting": null
+  },
+  "disableSubagentNotifications": false
+}

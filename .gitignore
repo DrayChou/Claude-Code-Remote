@@ -45,9 +45,33 @@ coverage/
 dist/
 build/
 
-# Temporary files
-tmp/
-temp/src/data/sessions/
-src/data/processed-messages.json
-src/data/session-map.json
-src/data/sessions/*.json
+# Runtime data directories
+src/data/
+!src/data/.gitkeep
+src/temp/
+src/logs/
+
+# User configuration files (generated at runtime)
+config/channels.json
+config/user.json
+
+# Session and message data
+*.pid
+daemon.log
+processed-messages.json
+sent-messages.json
+session-map.json
+subagent-activities.json
+
+# Tmux capture data
+src/data/tmux-captures/
+
+# Claude Code specific
+.lh/
+.specstory/
+CLAUDE.md
+.claude/
+
+# Test files
+.env.email-test
+.env.backup
