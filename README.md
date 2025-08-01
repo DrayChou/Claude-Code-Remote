@@ -20,9 +20,13 @@ Control [Claude Code](https://claude.ai/code) remotely via email. Start tasks lo
 
 - **📧 Email Notifications**: Get notified when Claude completes tasks ![](./assets/email_demo.png)
 - **🔄 Email Control**: Reply to emails to send new commands to Claude
-- **📱 Remote Access**: Control Claude from anywhere with just email
-- **🔒 Secure**: Whitelist-based sender verification
+- **📱 Telegram Integration**: Receive notifications and send commands via Telegram bot
+- **🤖 Smart Routing**: Intelligent channel selection based on message origin
+- **🎯 Multi-Channel Support**: Simultaneous monitoring of multiple communication channels
+- **📱 Remote Access**: Control Claude from anywhere with email, Telegram, or other channels
+- **🔒 Secure**: Whitelist-based sender verification for all channels
 - **📋 Multi-line Support**: Send complex commands with formatting
+- **🚀 Extensible Architecture**: Easy to add new communication channels (Discord, LINE, etc.)
 
 
 ## 📅 Changelog
@@ -38,7 +42,8 @@ Control [Claude Code](https://claude.ai/code) remotely via email. Start tasks lo
 ## 📋 TODO List
 
 ### Notification Channels
-- [ ] **Discord & Telegram**: Bot integration for messaging platforms
+- [x] **Telegram**: Bot integration for messaging platforms
+- [ ] **Discord**: Bot integration for messaging platforms  
 - [ ] **Slack Workflow**: Native Slack app with slash commands
 
 ### Developer Tools
@@ -67,39 +72,75 @@ cd Claude-Code-Remote
 npm install
 ```
 
-### Step 2: Configure Email Settings
+### Step 2: Configure Notification Settings
+
+You can use Email, Telegram, or both for notifications:
+
+#### Option A: Quick Configuration Manager
+
+```bash
+# Run the interactive configuration manager
+node src/config-manager.js
+
+# Choose your notification channels:
+# 1. Configure Email
+# 2. Configure Telegram
+# 3. Configure other channels
+```
+
+#### Option B: Manual Configuration
 
 ```bash
 # Copy the example configuration
 cp .env.example .env
 
-# Open .env in your editor
+# Edit environment variables
 nano .env  # or use vim, code, etc.
 ```
 
-Edit the `.env` file with your email credentials:
+### Step 2b: Telegram Bot Setup (If Using Telegram)
+
+#### Create Telegram Bot:
+1. Message [@BotFather](https://t.me/BotFather) on Telegram
+2. Send `/newbot` and follow prompts
+3. Save the **Bot Token** you receive
+
+#### Get Your Chat ID:
+1. Message [@userinfobot](https://t.me/userinfobot)
+2. Send `/start` to get your **Chat ID**
+3. Add both to your `.env` file
+
+#### Telegram Support Modes:
+- **Private Chat**: Configure `TELEGRAM_CHAT_ID` for specific user
+- **Group Chat**: Configure `TELEGRAM_GROUP_ID` for specific group  
+- **Dynamic Mode**: Just `TELEGRAM_BOT_TOKEN` - accepts any authorized private chat
+- **Whitelist Mode**: Add `TELEGRAM_WHITELIST` for user restrictions
+
+Edit the `.env` file with your credentials:
 
 ```env
-# Email account for sending notifications
+# ===== Email Configuration =====
 SMTP_USER=your-email@gmail.com
 SMTP_PASS=your-app-password    # Gmail: use App Password, not regular password
-
-# Email account for receiving replies (can be same as SMTP)
 IMAP_USER=your-email@gmail.com  
 IMAP_PASS=your-app-password
-
-# Where to send notifications
 EMAIL_TO=your-notification-email@gmail.com
-
-# Who can send commands (security whitelist)
 ALLOWED_SENDERS=your-notification-email@gmail.com
 
-# Path to session data (use absolute path)
+# ===== Telegram Configuration =====
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+TELEGRAM_CHAT_ID=your-chat-id           # For private chat
+TELEGRAM_GROUP_ID=your-group-id         # For group chat (optional)
+TELEGRAM_WHITELIST=user1,user2,user3    # Authorized users (optional)
+
+# ===== System Configuration =====
 SESSION_MAP_PATH=/your/absolute/path/to/Claude-Code-Remote/src/data/session-map.json
 ```
 
-📌 **Gmail users**: Create an [App Password](https://myaccount.google.com/security) instead of using your regular password.
-> Note: You may need to enable two-step verification in your google account first before create app password.
+📌 **Configuration Tips**:
+- **Email**: Gmail users need [App Passwords](https://myaccount.google.com/security)
+- **Telegram**: Create bot with [@BotFather](https://t.me/BotFather), get Chat ID from [@userinfobot](https://t.me/userinfobot)
+- **Flexible Setup**: You can configure just email, just Telegram, or both!
 
 ### Step 3: Set Up Claude Code Hooks
 
@@ -151,15 +192,23 @@ You should receive a test email. If not, check your email settings.
 
 ### Step 5: Start Claude Code Remote
 
-**Terminal 1 - Start email monitoring:**
+**Recommended: Multi-Channel Service (handles all configured channels)**
 ```bash
-npm run relay:pty
+npm start
 ```
 
-Keep this running. You should see:
+You should see:
 ```
-🚀 Claude Code Remote is running!
-📧 Monitoring emails...
+🚀 Claude Code Remote - Multi-Channel Service
+📧 Email: Ready
+📱 Telegram: Ready  
+🎯 Monitoring all channels...
+```
+
+**Alternative Options:**
+```bash
+npm run relay:pty        # Email only
+npm run telegram:polling # Telegram only (separate terminal)
 ```
 
 **Terminal 2 - Start Claude in tmux:**
@@ -202,8 +251,9 @@ Claude completed: "analyze the code structure"
 Reply to this email to send new commands.
 ```
 
-### Sending Commands via Email Reply
+### Sending Commands
 
+#### Via Email Reply:
 1. **Direct Reply**: Simply reply to the notification email
 2. **Write Command**: Type your command in the email body:
    ```
@@ -211,77 +261,108 @@ Reply to this email to send new commands.
    ```
 3. **Send**: Your command will automatically execute in Claude!
 
-### Advanced Email Features
+#### Via Telegram:
+1. **Receive Notification**: You'll get a message with a session token
+2. **Send Command**: Reply with the format:
+   ```
+   /cmd ABC12345 your command here
+   ```
+   Or use the short format:
+   ```
+   ABC12345 your command here
+   ```
+3. **Execute**: Your command runs automatically in Claude!
 
-**Multi-line Commands**
+#### Advanced Features:
+
+**Multi-line Commands** (both Email and Telegram):
 ```
 First analyze the current code structure.
 Then create a comprehensive test suite.
 Finally, update the documentation.
 ```
 
-**Complex Instructions**
+**Complex Instructions**:
 ```
 Refactor the authentication module with these requirements:
 - Use JWT tokens instead of sessions
-- Add rate limiting
+- Add rate limiting  
 - Implement refresh token logic
 - Update all related tests
 ```
 
-### Email Reply Workflow
+### Command Workflow
 
-1. **Receive Notification** → You get an email when Claude completes a task
-2. **Reply with Command** → Send your next instruction via email reply
-3. **Automatic Execution** → The system extracts your command and injects it into Claude
-4. **Get Results** → Receive another email when the new task completes
+1. **Receive Notification** → Get notified via your configured channels when Claude completes a task
+2. **Send Command** → Reply with your next instruction using email reply or Telegram commands
+3. **Smart Routing** → The system automatically routes your command to the correct Claude session
+4. **Get Results** → Receive notifications in the same channel where you sent the command
 
-### Supported Email Clients
+### Supported Platforms
 
-Works with any email client that supports standard reply functionality:
+**Email Clients:**
 - ✅ Gmail (Web/Mobile)
 - ✅ Apple Mail
 - ✅ Outlook
-- ✅ Any SMTP-compatible email client
+- ✅ Any SMTP-compatible client
+
+**Telegram Features:**
+- ✅ Private chat with bot
+- ✅ Group chat support
+- ✅ Dynamic chat discovery
+- ✅ Built-in help commands (`/help`, `/status`)
+- ✅ Token-based security
 
 ## 💡 Common Use Cases
 
-- **Remote Development**: Start coding at the office, continue from home via email
-- **Long Tasks**: Let Claude work while you're in meetings, check results via email
-- **Team Collaboration**: Share Claude sessions by forwarding notification emails
+- **Remote Development**: Start coding at the office, continue from home via email or Telegram
+- **Long Tasks**: Let Claude work while you're in meetings, get notified on your phone
+- **Team Collaboration**: Share Claude sessions in Telegram groups or forward notification emails
+- **Mobile Workflow**: Control Claude from your phone using Telegram while away from computer
+- **Multi-Device**: Get notifications on all your devices, respond from any of them
 
 ## 🔧 Useful Commands
 
 ```bash
-# Test email setup
-node claude-remote.js test
+# Test all configured channels
+npm test
 
-# Check system status
+# Check system status  
 node claude-remote.js status
+npm run multichannel:status
+
+# Test specific channels
+node claude-remote.js test        # Test all
+npm run telegram:test            # Test Telegram only
 
 # View tmux sessions
 tmux list-sessions
 tmux attach -t my-project
 
-# Stop email monitoring
-# Press Ctrl+C in the terminal running npm run relay:pty
+# Stop monitoring
+# Press Ctrl+C in the terminal running npm start
 ```
 
 ## 🔍 Troubleshooting
 
-**Not receiving emails?**
-- Run `node claude-remote.js test` to test email setup
-- Check spam folder
-- Verify SMTP settings in `.env`
-- For Gmail: ensure you're using App Password
+**Not receiving notifications?**
+- Run `npm test` to test all channels
+- **Email**: Check spam folder, verify SMTP settings, use Gmail App Password
+- **Telegram**: Verify bot token and chat ID, check bot permissions
 
 **Commands not executing?**
 - Ensure tmux session is running: `tmux list-sessions`
-- Check sender email matches `ALLOWED_SENDERS` in `.env`
+- **Email**: Check sender matches `ALLOWED_SENDERS` in `.env`
+- **Telegram**: Verify you're using correct token format, check whitelist settings
 - Verify Claude is running inside tmux
 
+**Channel-specific issues?**
+- Check configuration: `npm run multichannel:status`
+- View detailed logs: `LOG_LEVEL=debug npm start`
+
 **Need help?**
-- Check [Issues](https://github.com/JessyTsui/Claude-Code-Remote/issues)
+- Check [Issues](https://github.com/JessyTsui/Claude-Code-Remote/issues)  
+- Read [Development Guide](./docs/DEVELOPMENT.md) for advanced usage
 - Follow [@Jiaxi_Cui](https://x.com/Jiaxi_Cui) for updates
 
 ## 🛡️ Security
