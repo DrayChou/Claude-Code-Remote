@@ -10,12 +10,14 @@ const path = require('path');
 const { spawn, exec } = require('child_process');
 const Logger = require('../core/logger');
 const ConfigManager = require('../core/config');
+const PidManager = require('../utils/pid-manager');
 
 class ClaudeCodeRemoteDaemon {
     constructor() {
         this.logger = new Logger('Daemon');
         this.config = new ConfigManager();
-        this.pidFile = path.join(__dirname, '../data/claude-code-remote.pid');
+        this.pidManager = new PidManager('claude-remote-daemon');
+        this.pidFile = this.pidManager.getPidFilePath(); // 使用PidManager的路径
         this.logFile = path.join(__dirname, '../data/daemon.log');
         this.relayService = null;
         this.isRunning = false;
@@ -29,11 +31,11 @@ class ClaudeCodeRemoteDaemon {
 
     async start(detached = true) {
         try {
-            // Check if already running
-            if (this.isAlreadyRunning()) {
-                console.log('❌ Claude-Code-Remote daemon is already running');
-                console.log('💡 Use "claude-remote daemon stop" to stop existing service');
-                process.exit(1);
+            // 使用PidManager清理旧进程
+            console.log('🔍 Checking for existing daemon processes...');
+            if (this.pidManager.hasRunningInstances()) {
+                console.log('⚡ Found running instances, cleaning up...');
+                this.pidManager.cleanupOldProcesses();
             }
 
             if (detached) {
@@ -63,8 +65,13 @@ class ClaudeCodeRemoteDaemon {
         child.stdout.pipe(logStream);
         child.stderr.pipe(logStream);
 
-        // Save PID
-        fs.writeFileSync(this.pidFile, child.pid.toString());
+        // 使用PidManager注册子进程
+        const tempPidManager = new PidManager('claude-remote-daemon');
+        tempPidManager._writePidFile([child.pid], {
+            detached: true,
+            command: 'daemon start',
+            logFile: this.logFile
+        });
 
         // Detach child process
         child.unref();
@@ -77,6 +84,12 @@ class ClaudeCodeRemoteDaemon {
 
     async startForeground() {
         console.log('🚀 Claude-Code-Remote daemon starting...');
+        
+        // 注册当前进程
+        this.pidManager.registerCurrentProcess({
+            foreground: true,
+            command: 'daemon --foreground'
+        });
         
         this.isRunning = true;
         process.title = 'claude-code-remote-daemon';
@@ -115,10 +128,8 @@ class ClaudeCodeRemoteDaemon {
                 await this.relayService.stop();
             }
             
-            // Delete PID file
-            if (fs.existsSync(this.pidFile)) {
-                fs.unlinkSync(this.pidFile);
-            }
+            // 使用PidManager清理PID文件
+            this.pidManager.cleanup();
             
             process.exit(0);
         };
@@ -173,30 +184,24 @@ class ClaudeCodeRemoteDaemon {
     }
 
     async stop() {
-        if (!this.isAlreadyRunning()) {
+        if (!this.pidManager.hasRunningInstances()) {
             console.log('❌ Claude-Code-Remote daemon is not running');
             return;
         }
 
         try {
-            const pid = this.getPid();
-            console.log(`🛑 Stopping Claude-Code-Remote daemon (PID: ${pid})...`);
+            console.log('🛑 Stopping Claude-Code-Remote daemon...');
             
-            // Send SIGTERM signal
-            process.kill(pid, 'SIGTERM');
-            
-            // Wait for process to end
-            await this.waitForStop(pid);
+            // 使用PidManager清理所有相关进程
+            this.pidManager.cleanupOldProcesses();
             
             console.log('✅ Claude-Code-Remote daemon stopped');
         } catch (error) {
             console.error('❌ Failed to stop daemon:', error.message);
             
-            // Force delete PID file
-            if (fs.existsSync(this.pidFile)) {
-                fs.unlinkSync(this.pidFile);
-                console.log('🧹 PID file cleaned up');
-            }
+            // 强制清理PID文件
+            this.pidManager.cleanup();
+            console.log('🧹 PID file cleaned up');
         }
     }
 
@@ -208,15 +213,15 @@ class ClaudeCodeRemoteDaemon {
     }
 
     getStatus() {
-        const isRunning = this.isAlreadyRunning();
-        const pid = isRunning ? this.getPid() : null;
+        const hasRunning = this.pidManager.hasRunningInstances();
+        const pids = hasRunning ? this.pidManager._readPidFile() : [];
         
         return {
-            running: isRunning,
-            pid: pid,
+            running: hasRunning,
+            pids: pids,
             pidFile: this.pidFile,
             logFile: this.logFile,
-            uptime: isRunning ? this.getUptime(pid) : null
+            uptime: pids.length > 0 ? this.getUptime(pids[0]) : null
         };
     }
 
@@ -227,7 +232,7 @@ class ClaudeCodeRemoteDaemon {
         
         if (status.running) {
             console.log('✅ Status: Running');
-            console.log(`🆔 PID: ${status.pid}`);
+            console.log(`🆔 PIDs: ${status.pids.join(', ')}`);
             console.log(`⏱️ Uptime: ${status.uptime || 'Unknown'}`);
         } else {
             console.log('❌ Status: Not running');
@@ -249,28 +254,14 @@ class ClaudeCodeRemoteDaemon {
         }
     }
 
+    // 这些方法现在由PidManager处理，保留作为兼容性方法
     isAlreadyRunning() {
-        if (!fs.existsSync(this.pidFile)) {
-            return false;
-        }
-
-        try {
-            const pid = parseInt(fs.readFileSync(this.pidFile, 'utf8'));
-            // Check if process is still running
-            process.kill(pid, 0);
-            return true;
-        } catch (error) {
-            // Process doesn't exist, delete outdated PID file
-            fs.unlinkSync(this.pidFile);
-            return false;
-        }
+        return this.pidManager.hasRunningInstances();
     }
 
     getPid() {
-        if (!fs.existsSync(this.pidFile)) {
-            return null;
-        }
-        return parseInt(fs.readFileSync(this.pidFile, 'utf8'));
+        const pids = this.pidManager._readPidFile();
+        return pids.length > 0 ? pids[0] : null;
     }
 
     async waitForStop(pid, timeout = 10000) {
@@ -292,16 +283,45 @@ class ClaudeCodeRemoteDaemon {
 
     getUptime(pid) {
         try {
-            // Get process start time on macOS and Linux
             const { execSync } = require('child_process');
-            const result = execSync(`ps -o lstart= -p ${pid}`, { encoding: 'utf8' });
-            const startTime = new Date(result.trim());
-            const uptime = Date.now() - startTime.getTime();
+            const os = require('os');
+            const platform = os.platform();
             
-            const hours = Math.floor(uptime / (1000 * 60 * 60));
-            const minutes = Math.floor((uptime % (1000 * 60 * 60)) / (1000 * 60));
+            let result;
             
-            return `${hours}h ${minutes}m`;
+            if (platform === 'win32') {
+                // Windows: 使用 PowerShell 获取进程创建时间，更可靠
+                result = execSync(`powershell.exe -Command "Get-Process -Id ${pid} | Select-Object StartTime"`, { 
+                    encoding: 'utf8' 
+                });
+                
+                // 解析PowerShell输出
+                const lines = result.split('\n').filter(line => line.trim() && !line.includes('StartTime') && !line.includes('---'));
+                if (lines.length > 0) {
+                    const startTimeStr = lines[0].trim();
+                    if (startTimeStr && startTimeStr !== '') {
+                        const startTime = new Date(startTimeStr);
+                        const uptime = Date.now() - startTime.getTime();
+                        
+                        const hours = Math.floor(uptime / (1000 * 60 * 60));
+                        const minutes = Math.floor((uptime % (1000 * 60 * 60)) / (1000 * 60));
+                        
+                        return `${hours}h ${minutes}m`;
+                    }
+                }
+            } else {
+                // macOS/Linux: 使用 ps 命令
+                result = execSync(`ps -o lstart= -p ${pid}`, { encoding: 'utf8' });
+                const startTime = new Date(result.trim());
+                const uptime = Date.now() - startTime.getTime();
+                
+                const hours = Math.floor(uptime / (1000 * 60 * 60));
+                const minutes = Math.floor((uptime % (1000 * 60 * 60)) / (1000 * 60));
+                
+                return `${hours}h ${minutes}m`;
+            }
+            
+            return 'Unknown';
         } catch (error) {
             return 'Unknown';
         }
