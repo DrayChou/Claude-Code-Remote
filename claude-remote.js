@@ -81,6 +81,9 @@ class ClaudeCodeRemoteCLI {
                 case 'setup-permissions':
                     await this.handleSetupPermissions(args.slice(1));
                     break;
+                case 'test-command':
+                    await this.handleTestCommand(args.slice(1));
+                    break;
                 case 'diagnose':
                     await this.handleDiagnose(args.slice(1));
                     break;
@@ -1032,6 +1035,44 @@ class ClaudeCodeRemoteCLI {
         const AutomationDiagnostic = require('./diagnose-automation');
         const diagnostic = new AutomationDiagnostic();
         await diagnostic.runDiagnostic();
+    }
+
+    async handleTestCommand(args) {
+        // Test command execution directly
+        const testCommand = args.join(' ') || 'hello';
+        
+        console.log(`\n🧪 Testing command execution: "${testCommand}"\n`);
+        
+        const TmuxInjector = require('./src/relay/tmux-injector');
+        const logger = {
+            info: console.log,
+            debug: console.log,
+            warn: console.warn,
+            error: console.error
+        };
+        
+        const injector = new TmuxInjector(logger);
+        
+        // Test streaming command
+        console.log('🔄 Testing streaming mode...');
+        
+        const options = {
+            streaming: true,
+            sessionId: 'test-session',
+            onStream: (chunk) => {
+                process.stdout.write(`📝 STREAM: ${chunk}`);
+            },
+            onStreamComplete: (finalOutput) => {
+                console.log(`\n✅ Stream completed. Final output length: ${finalOutput.length}`);
+            }
+        };
+        
+        try {
+            const result = await injector.injectCommandWindows(testCommand, options);
+            console.log('\n🎉 Test result:', result);
+        } catch (error) {
+            console.error('\n❌ Test failed:', error.message);
+        }
     }
 
     async handleCleanup(args) {

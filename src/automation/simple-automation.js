@@ -98,6 +98,23 @@ ${command}
                     
                     pbcopy.on('error', () => resolve(false));
                 });
+            } else if (process.platform === 'win32') {
+                // Windows clipboard using PowerShell
+                const psCommand = `Set-Clipboard -Value "${command.replace(/"/g, '`"')}"`;
+                const powershell = spawn('powershell.exe', ['-Command', psCommand]);
+                
+                return new Promise((resolve) => {
+                    powershell.on('close', (code) => {
+                        if (code === 0) {
+                            this.logger.info('Command copied to clipboard');
+                            resolve(true);
+                        } else {
+                            resolve(false);
+                        }
+                    });
+                    
+                    powershell.on('error', () => resolve(false));
+                });
             }
             return false;
         } catch (error) {
@@ -111,9 +128,9 @@ ${command}
      */
     async _sendRichNotification(command, sessionId) {
         try {
+            const shortCommand = command.length > 50 ? command.substring(0, 50) + '...' : command;
+            
             if (process.platform === 'darwin') {
-                const shortCommand = command.length > 50 ? command.substring(0, 50) + '...' : command;
-                
                 // Create detailed notification
                 const script = `
                     set commandText to "${command.replace(/"/g, '\\"').replace(/\n/g, '\\n')}"
@@ -149,6 +166,30 @@ ${command}
                         resolve(true);
                     });
                 });
+            } else if (process.platform === 'win32') {
+                // Windows notification using PowerShell
+                const psCommand = `
+                    $title = "TaskPing - New Email Command"
+                    $message = "Command copied to clipboard, please paste to Claude Code: $shortCommand"
+                    Add-Type -AssemblyName System.Windows.Forms
+                    [System.Windows.Forms.MessageBox]::Show("$message", "$title", "OK", "Information")
+                `;
+                
+                const powershell = spawn('powershell.exe', ['-Command', psCommand]);
+                
+                return new Promise((resolve) => {
+                    powershell.on('close', (code) => {
+                        if (code === 0) {
+                            this.logger.info('Windows notification sent successfully');
+                            resolve(true);
+                        } else {
+                            this.logger.warn('Windows notification failed');
+                            resolve(false);
+                        }
+                    });
+                    
+                    powershell.on('error', () => resolve(false));
+                });
             }
             return false;
         } catch (error) {
@@ -163,12 +204,28 @@ ${command}
     async _sendSimpleNotification(command) {
         try {
             const shortCommand = command.length > 50 ? command.substring(0, 50) + '...' : command;
-            const script = `display notification "Command: ${shortCommand.replace(/"/g, '\\"')}" with title "TaskPing - Email Command" sound name "default"`;
             
-            const osascript = spawn('osascript', ['-e', script]);
-            osascript.on('close', () => {
-                this.logger.info('Simple notification sent');
-            });
+            if (process.platform === 'darwin') {
+                const script = `display notification "Command: ${shortCommand.replace(/"/g, '\\"')}" with title "TaskPing - Email Command" sound name "default"`;
+                
+                const osascript = spawn('osascript', ['-e', script]);
+                osascript.on('close', () => {
+                    this.logger.info('Simple notification sent');
+                });
+            } else if (process.platform === 'win32') {
+                // Windows toast notification
+                const psCommand = `
+                    $title = "TaskPing - Email Command"
+                    $message = "Command: $shortCommand"
+                    Add-Type -AssemblyName System.Windows.Forms
+                    [System.Windows.Forms.MessageBox]::Show("$message", "$title", "OK", "Information")
+                `;
+                
+                const powershell = spawn('powershell.exe', ['-Command', psCommand]);
+                powershell.on('close', () => {
+                    this.logger.info('Windows simple notification sent');
+                });
+            }
         } catch (error) {
             this.logger.warn('Simple notification also failed:', error.message);
         }
@@ -222,6 +279,54 @@ ${command}
                     
                     osascript.on('error', () => resolve(false));
                 });
+            } else if (process.platform === 'win32') {
+                // Windows automation using PowerShell
+                const psCommand = `
+                    Add-Type -AssemblyName System.Windows.Forms
+                    Add-Type -AssemblyName System.Drawing
+                    
+                    # Try to get foreground window
+                    $foregroundWindow = [System.Windows.Forms.Control]::FromHandle([System.Windows.Forms.User32]::GetForegroundWindow())
+                    
+                    if ($foregroundWindow -ne $null) {
+                        $windowTitle = $foregroundWindow.Text
+                        
+                        # Check if it's a target application
+                        if ($windowTitle -like "*Claude*" -or $windowTitle -like "*Terminal*" -or $windowTitle -like "*PowerShell*" -or $windowTitle -like "*Code*") {
+                            # Send Ctrl+V to paste
+                            [System.Windows.Forms.SendKeys]::SendWait("^v")
+                            Start-Sleep -Milliseconds 200
+                            # Send Enter to execute
+                            [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+                            return "success"
+                        } else {
+                            return "not_target_app"
+                        }
+                    } else {
+                        return "no_window"
+                    }
+                `;
+                
+                const powershell = spawn('powershell.exe', ['-Command', psCommand]);
+                let output = '';
+                
+                powershell.stdout.on('data', (data) => {
+                    output += data.toString().trim();
+                });
+                
+                return new Promise((resolve) => {
+                    powershell.on('close', (code) => {
+                        if (code === 0 && output === 'success') {
+                            this.logger.info('Windows simple automation succeeded');
+                            resolve(true);
+                        } else {
+                            this.logger.debug(`Windows simple automation result: ${output}`);
+                            resolve(false);
+                        }
+                    });
+                    
+                    powershell.on('error', () => resolve(false));
+                });
             }
             return false;
         } catch (error) {
@@ -239,6 +344,11 @@ ${command}
                 if (process.platform === 'darwin') {
                     spawn('open', ['-t', this.commandFile]);
                     this.logger.info('Command file opened');
+                    return true;
+                } else if (process.platform === 'win32') {
+                    // Windows: open with default text editor
+                    spawn('cmd.exe', ['/c', 'start', 'notepad', this.commandFile]);
+                    this.logger.info('Command file opened in Notepad');
                     return true;
                 }
             }
@@ -268,7 +378,8 @@ ${command}
      */
     getStatus() {
         return {
-            supported: process.platform === 'darwin',
+            supported: process.platform === 'darwin' || process.platform === 'win32',
+            platform: process.platform,
             commandFile: this.commandFile,
             commandFileExists: fs.existsSync(this.commandFile),
             lastCommand: this._getLastCommand()
