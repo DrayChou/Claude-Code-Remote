@@ -10,7 +10,6 @@ const envPath = path.join(__dirname, '../../.env');
 require('dotenv').config({ path: envPath });
 const Imap = require('node-imap');
 const { simpleParser } = require('mailparser');
-const { spawn } = require('node-pty');
 const { existsSync, readFileSync, writeFileSync } = require('fs');
 const pino = require('pino');
 
@@ -31,7 +30,6 @@ const SESS_PATH = process.env.SESSION_MAP_PATH || path.join(__dirname, '../data/
 const PROCESSED_PATH = path.join(__dirname, '../data/processed-messages.json');
 const SENT_MESSAGES_PATH = path.join(__dirname, '../data/sent-messages.json');
 const ALLOWED_SENDERS = (process.env.ALLOWED_SENDERS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-const PTY_POOL = new Map();
 let PROCESSED_MESSAGES = new Set();
 
 // Load processed messages
@@ -505,7 +503,7 @@ function startImap() {
     loadProcessedMessages();
     
     log.info('Starting relay-pty service', {
-        mode: 'pty',
+        mode: 'tmux',
         imapHost: process.env.IMAP_HOST,
         imapUser: process.env.IMAP_USER,
         allowedSenders: ALLOWED_SENDERS,
