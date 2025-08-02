@@ -1,396 +1,282 @@
-# Claude Code Remote
+# Claude Code Remote - Telegram Bot
 
-Control [Claude Code](https://claude.ai/code) remotely via email. Start tasks locally, receive notifications when Claude completes them, and send new commands by simply replying to emails.
+Control [Claude Code](https://claude.ai/code) remotely via Telegram. Send commands through a Telegram bot and receive streaming responses directly in your chat.
 
-<div align="center">
-  
-  ### 🎥 Watch Demo Video
-  
-  <a href="https://youtu.be/_yrNlDYOJhw">
-    <img src="./assets/CCRemote_demo.png" alt="Claude Code Remote Demo" width="100%">
-    <br>
-    <img src="https://img.shields.io/badge/▶-Watch%20on%20YouTube-red?style=for-the-badge&logo=youtube" alt="Watch on YouTube">
-  </a>
-  
-</div>
+## Features
 
-> 🐦 Follow [@Jiaxi_Cui](https://x.com/Jiaxi_Cui) for updates and AI development insights
+- **🤖 Telegram Bot Interface**: Send commands and receive responses via Telegram
+- **📱 Streaming Responses**: Real-time message updates as Claude works
+- **🔒 Secure Access**: User/Chat ID whitelisting for access control
+- **🌍 Proxy Support**: HTTP proxy support for restricted regions
+- **🎯 Smart Formatting**: Intelligent message formatting for better readability
+- **📋 Multi-language Support**: Optimized for Chinese/English mixed content
+- **🔄 Auto-retry**: Robust error handling and automatic retry logic
+- **📊 Detailed Logging**: Comprehensive logging for debugging
 
-## ✨ Features
+## Quick Start
 
-- **📧 Email Notifications**: Get notified when Claude completes tasks ![](./assets/email_demo.png)
-- **🔄 Email Control**: Reply to emails to send new commands to Claude
-- **📱 Telegram Integration**: Receive notifications and send commands via Telegram bot
-- **🤖 Smart Routing**: Intelligent channel selection based on message origin
-- **🎯 Multi-Channel Support**: Simultaneous monitoring of multiple communication channels
-- **📱 Remote Access**: Control Claude from anywhere with email, Telegram, or other channels
-- **🔒 Secure**: Whitelist-based sender verification for all channels
-- **📋 Multi-line Support**: Send complex commands with formatting
-- **🚀 Extensible Architecture**: Easy to add new communication channels (Discord, LINE, etc.)
-
-
-## 📅 Changelog
-
-### January 2025
-- **2025-08-01**: Implement terminal-style UI for email notifications ([#8](https://github.com/JessyTsui/Claude-Code-Remote/pull/8) by [@vaclisinc](https://github.com/vaclisinc))
-- **2025-08-01**: Fix working directory issue - enable claude-remote to run from any directory ([#7](https://github.com/JessyTsui/Claude-Code-Remote/pull/7) by [@vaclisinc](https://github.com/vaclisinc))
-- **2025-07-31**: Fix self-reply loop issue when using same email for send/receive ([#4](https://github.com/JessyTsui/Claude-Code-Remote/pull/4) by [@vaclisinc](https://github.com/vaclisinc))
-
-### July 2025
-- **2025-07-28**: Remove hardcoded values and implement environment-based configuration ([#2](https://github.com/JessyTsui/Claude-Code-Remote/pull/2) by [@kevinsslin](https://github.com/kevinsslin))
-
-## 📋 TODO List
-
-### Notification Channels
-- [x] **Telegram**: Bot integration for messaging platforms
-- [ ] **Discord**: Bot integration for messaging platforms  
-- [ ] **Slack Workflow**: Native Slack app with slash commands
-
-### Developer Tools
-- [ ] **AI Tools**: Support for Gemini CLI, Cursor, and other AI tools
-- [ ] **Git Automation**: Auto-commit, PR creation, branch management
-
-### Usage Analytics
-- [ ] **Cost Tracking**: Token usage and estimated costs
-- [ ] **Performance Metrics**: Execution time and resource usage
-- [ ] **Scheduled Reports**: Daily/weekly usage summaries via email
-
-### Native Apps
-- [ ] **Mobile Apps**: iOS and Android applications
-- [ ] **Desktop Apps**: macOS and Windows native clients
-
-
-## 🚀 Setup Guide
-
-Follow these steps to get Claude Code Remote running:
-
-### Step 1: Clone and Install Dependencies
+### 1. Install Dependencies
 
 ```bash
+# Clone the repository
 git clone https://github.com/JessyTsui/Claude-Code-Remote.git
 cd Claude-Code-Remote
-npm install
+
+# Install Python dependencies
+pip install -r requirements.txt
 ```
 
-### Step 2: Configure Notification Settings
-
-You can use Email, Telegram, or both for notifications:
-
-#### Option A: Quick Configuration Manager
-
-```bash
-# Run the interactive configuration manager
-node src/config-manager.js
-
-# Choose your notification channels:
-# 1. Configure Email
-# 2. Configure Telegram
-# 3. Configure other channels
-```
-
-#### Option B: Manual Configuration
+### 2. Configure Environment
 
 ```bash
 # Copy the example configuration
 cp .env.example .env
 
-# Edit environment variables
-nano .env  # or use vim, code, etc.
+# Edit the configuration file
+nano .env  # or use your preferred editor
 ```
 
-### Step 2b: Telegram Bot Setup (If Using Telegram)
+Add your configuration:
 
-#### Create Telegram Bot:
+```env
+# Telegram Bot Token (from @BotFather)
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+
+# Claude CLI configuration
+CLAUDE_CLI_PATH=claude
+CLAUDE_WORKING_DIR=/path/to/your/project
+
+# User authorization (your user ID)
+ALLOWED_USER_IDS=123456789
+
+# Optional: Proxy configuration
+HTTP_PROXY=http://127.0.0.1:7890
+```
+
+### 3. Set Up Telegram Bot
+
+#### Create a Telegram Bot:
 1. Message [@BotFather](https://t.me/BotFather) on Telegram
-2. Send `/newbot` and follow prompts
+2. Send `/newbot` and follow the prompts
 3. Save the **Bot Token** you receive
 
 #### Get Your Chat ID:
 1. Message [@userinfobot](https://t.me/userinfobot)
 2. Send `/start` to get your **Chat ID**
-3. Add both to your `.env` file
+3. Add it to `ALLOWED_USER_IDS` in your `.env` file
 
-#### Telegram Support Modes:
-- **Private Chat**: Configure `TELEGRAM_CHAT_ID` for specific user
-- **Group Chat**: Configure `TELEGRAM_GROUP_ID` for specific group  
-- **Dynamic Mode**: Just `TELEGRAM_BOT_TOKEN` - accepts any authorized private chat
-- **Whitelist Mode**: Add `TELEGRAM_WHITELIST` for user restrictions
-
-Edit the `.env` file with your credentials:
-
-```env
-# ===== Email Configuration =====
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password    # Gmail: use App Password, not regular password
-IMAP_USER=your-email@gmail.com  
-IMAP_PASS=your-app-password
-EMAIL_TO=your-notification-email@gmail.com
-ALLOWED_SENDERS=your-notification-email@gmail.com
-
-# ===== Telegram Configuration =====
-TELEGRAM_BOT_TOKEN=your-telegram-bot-token
-TELEGRAM_CHAT_ID=your-chat-id           # For private chat
-TELEGRAM_GROUP_ID=your-group-id         # For group chat (optional)
-TELEGRAM_WHITELIST=user1,user2,user3    # Authorized users (optional)
-
-# ===== System Configuration =====
-SESSION_MAP_PATH=/your/absolute/path/to/Claude-Code-Remote/src/data/session-map.json
-```
-
-📌 **Configuration Tips**:
-- **Email**: Gmail users need [App Passwords](https://myaccount.google.com/security)
-- **Telegram**: Create bot with [@BotFather](https://t.me/BotFather), get Chat ID from [@userinfobot](https://t.me/userinfobot)
-- **Flexible Setup**: You can configure just email, just Telegram, or both!
-
-### Step 3: Set Up Claude Code Hooks
-
-Open Claude's settings file:
+### 4. Run the Bot
 
 ```bash
-# Create the directory if it doesn't exist
-mkdir -p ~/.claude
+# Start the bot
+python telegram_bot.py
 
-# Edit settings.json
-nano ~/.claude/settings.json
+# Or with custom options
+python telegram_bot.py --claude-working-dir "/path/to/project"
+python telegram_bot.py --proxy "http://127.0.0.1:7890"
 ```
 
-Add this configuration (replace `/your/absolute/path/` with your actual path):
+### 5. Start Using Claude
 
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "matcher": "*",
-      "hooks": [{
-        "type": "command",
-        "command": "node /your/absolute/path/to/Claude-Code-Remote/claude-remote.js notify --type completed",
-        "timeout": 5
-      }]
-    }],
-    "SubagentStop": [{
-      "matcher": "*",
-      "hooks": [{
-        "type": "command",
-        "command": "node /your/absolute/path/to/Claude-Code-Remote/claude-remote.js notify --type waiting",
-        "timeout": 5
-      }]
-    }]
-  }
-}
-```
+1. **Send a command** to your Telegram bot:
+   ```
+   What is 2+2?
+   ```
 
-> **Note**: Subagent notifications are disabled by default. To enable them, set `enableSubagentNotifications: true` in your config. See [Subagent Notifications Guide](./docs/SUBAGENT_NOTIFICATIONS.md) for details.
+2. **Watch the streaming response** as Claude thinks and responds
 
-### Step 4: Test Your Setup
+3. **Send follow-up commands** to continue the conversation
+
+## Configuration Options
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token | Required |
+| `CLAUDE_CLI_PATH` | Path to Claude CLI | `claude` |
+| `CLAUDE_WORKING_DIR` | Directory where Claude works | Current directory |
+| `ALLOWED_USER_IDS` | Comma-separated user IDs | None (allow all) |
+| `ALLOWED_CHAT_IDS` | Comma-separated chat IDs | None (allow all) |
+| `HTTP_PROXY` | HTTP proxy for Telegram API | None |
+| `POLL_INTERVAL` | Polling interval in seconds | 2 |
+| `CLAUDE_TIMEOUT` | Claude execution timeout | 60 |
+| `LOG_LEVEL` | Logging level | `INFO` |
+
+### Command Line Options
 
 ```bash
-# Test email configuration
-node claude-remote.js test
+python telegram_bot.py [OPTIONS]
+
+Options:
+  --bot-token TOKEN           Telegram Bot Token
+  --claude-cli-path PATH      Claude CLI path
+  --claude-working-dir DIR    Claude working directory
+  --proxy URL                 HTTP proxy URL
+  --poll-interval SECONDS     Polling interval
+  --claude-timeout SECONDS    Claude timeout
+  --log-level LEVEL           Log level (DEBUG, INFO, WARNING, ERROR)
+  --allowed-user-ids IDS      Allowed user IDs
+  --allowed-chat-ids IDS      Allowed chat IDs
+  --help                      Show help message
 ```
 
-You should receive a test email. If not, check your email settings.
+## Usage Examples
 
-### Step 5: Start Claude Code Remote
+### Basic Commands
 
-**Recommended: Multi-Channel Service (handles all configured channels)**
-```bash
-npm start
-```
+Send any command you would normally use with Claude:
 
-You should see:
-```
-🚀 Claude Code Remote - Multi-Channel Service
-📧 Email: Ready
-📱 Telegram: Ready  
-🎯 Monitoring all channels...
-```
-
-**Alternative Options:**
-```bash
-npm run relay:pty        # Email only
-npm run telegram:polling # Telegram only (separate terminal)
-```
-
-**Terminal 2 - Start Claude in tmux:**
-```bash
-# Create a new tmux session
-tmux new-session -s my-project
-
-# Inside tmux, start Claude
-claude
-```
-
-### Step 6: You're Ready!
-
-1. Use Claude normally in the tmux session
-2. When Claude completes a task, you'll receive an email
-3. Reply to the email with new commands
-4. Your commands will execute automatically in Claude
-
-### Verify Everything Works
-
-In Claude, type:
 ```
 What is 2+2?
 ```
-
-Wait for Claude to respond, then check your email. You should receive a notification!
-
-## 📖 How to Use
-
-### Email Notifications
-When Claude completes a task, you'll receive an email notification:
-
 ```
-Subject: Claude Code Remote Task Complete [#ABC123]
-
-Claude completed: "analyze the code structure"
-
-[Claude's full response here...]
-
-Reply to this email to send new commands.
+Analyze the code in this directory
+```
+```
+Create a Python script that scrapes websites
 ```
 
-### Sending Commands
+### Multi-line Commands
 
-#### Via Email Reply:
-1. **Direct Reply**: Simply reply to the notification email
-2. **Write Command**: Type your command in the email body:
-   ```
-   Please refactor the main function and add error handling
-   ```
-3. **Send**: Your command will automatically execute in Claude!
+The bot supports complex, multi-line instructions:
 
-#### Via Telegram:
-1. **Receive Notification**: You'll get a message with a session token
-2. **Send Command**: Reply with the format:
-   ```
-   /cmd ABC12345 your command here
-   ```
-   Or use the short format:
-   ```
-   ABC12345 your command here
-   ```
-3. **Execute**: Your command runs automatically in Claude!
-
-#### Advanced Features:
-
-**Multi-line Commands** (both Email and Telegram):
 ```
-First analyze the current code structure.
-Then create a comprehensive test suite.
-Finally, update the documentation.
+I need you to:
+
+1. Analyze the current codebase
+2. Identify performance bottlenecks
+3. Suggest optimizations
+4. Implement the most critical ones
+
+Please provide detailed explanations for each suggestion.
 ```
 
-**Complex Instructions**:
+### Special Commands
+
+- **`/id`** or **`id`**: Get your user and chat ID
+- **`#id`**: Alternative ID command
+
+## Advanced Features
+
+### Streaming Responses
+
+The bot provides real-time streaming responses:
+- Initial "thinking" message appears immediately
+- Response updates every 3 seconds as Claude works
+- Final formatted response is delivered when complete
+- Supports long responses with intelligent formatting
+
+### Smart Message Formatting
+
+The bot automatically formats responses for better readability:
+- **List formatting**: Numbered and bulleted lists
+- **Title recognition**: Headers and important text
+- **Mixed language support**: Optimized for Chinese/English content
+- **Code blocks**: Preserved formatting for technical content
+
+### Security Features
+
+- **User whitelisting**: Only authorized users can interact
+- **Chat whitelisting**: Restrict to specific chats or groups
+- **No data storage**: Messages are not stored after processing
+- **Secure API communication**: All communication via HTTPS
+
+### Proxy Support
+
+For users in regions with restricted access:
+
+```env
+HTTP_PROXY=http://127.0.0.1:7890
 ```
-Refactor the authentication module with these requirements:
-- Use JWT tokens instead of sessions
-- Add rate limiting  
-- Implement refresh token logic
-- Update all related tests
+
+Or via command line:
+```bash
+python telegram_bot.py --proxy "http://127.0.0.1:7890"
 ```
 
-### Command Workflow
+## Troubleshooting
 
-1. **Receive Notification** → Get notified via your configured channels when Claude completes a task
-2. **Send Command** → Reply with your next instruction using email reply or Telegram commands
-3. **Smart Routing** → The system automatically routes your command to the correct Claude session
-4. **Get Results** → Receive notifications in the same channel where you sent the command
+### Common Issues
 
-### Supported Platforms
+**Bot not responding?**
+- Check `TELEGRAM_BOT_TOKEN` is correct
+- Verify bot is running: `python telegram_bot.py --log-level DEBUG`
+- Check your user ID is in `ALLOWED_USER_IDS`
 
-**Email Clients:**
-- ✅ Gmail (Web/Mobile)
-- ✅ Apple Mail
-- ✅ Outlook
-- ✅ Any SMTP-compatible client
+**Claude commands failing?**
+- Verify `CLAUDE_CLI_PATH` is correct
+- Check `CLAUDE_WORKING_DIR` exists and is accessible
+- Test Claude CLI manually: `claude --version`
 
-**Telegram Features:**
-- ✅ Private chat with bot
-- ✅ Group chat support
-- ✅ Dynamic chat discovery
-- ✅ Built-in help commands (`/help`, `/status`)
-- ✅ Token-based security
+**Network issues?**
+- Configure proxy if needed
+- Check internet connection
+- Verify Telegram API is accessible
 
-## 💡 Common Use Cases
+**Permission errors?**
+- Check file permissions in working directory
+- Verify Claude CLI has necessary permissions
 
-- **Remote Development**: Start coding at the office, continue from home via email or Telegram
-- **Long Tasks**: Let Claude work while you're in meetings, get notified on your phone
-- **Team Collaboration**: Share Claude sessions in Telegram groups or forward notification emails
-- **Mobile Workflow**: Control Claude from your phone using Telegram while away from computer
-- **Multi-Device**: Get notifications on all your devices, respond from any of them
+### Debug Mode
 
-## 🔧 Useful Commands
+Enable detailed logging:
 
 ```bash
-# Test all configured channels
-npm test
-
-# Check system status  
-node claude-remote.js status
-npm run multichannel:status
-
-# Test specific channels
-node claude-remote.js test        # Test all
-npm run telegram:test            # Test Telegram only
-
-# View tmux sessions
-tmux list-sessions
-tmux attach -t my-project
-
-# Stop monitoring
-# Press Ctrl+C in the terminal running npm start
+python telegram_bot.py --log-level DEBUG
 ```
 
-## 🔍 Troubleshooting
+Or set in environment:
+```env
+LOG_LEVEL=DEBUG
+```
 
-**Not receiving notifications?**
-- Run `npm test` to test all channels
-- **Email**: Check spam folder, verify SMTP settings, use Gmail App Password
-- **Telegram**: Verify bot token and chat ID, check bot permissions
+## Architecture
 
-**Commands not executing?**
-- Ensure tmux session is running: `tmux list-sessions`
-- **Email**: Check sender matches `ALLOWED_SENDERS` in `.env`
-- **Telegram**: Verify you're using correct token format, check whitelist settings
-- Verify Claude is running inside tmux
+### Components
 
-**Channel-specific issues?**
-- Check configuration: `npm run multichannel:status`
-- View detailed logs: `LOG_LEVEL=debug npm start`
+- **TelegramBot**: Main bot class handling Telegram API
+- **ClaudeResponse**: Data structure for Claude responses
+- **Message Formatting**: Intelligent content formatting
+- **Streaming Handler**: Real-time response updates
+- **Authorization**: User and chat access control
 
-**Need help?**
-- Check [Issues](https://github.com/JessyTsui/Claude-Code-Remote/issues)  
-- Read [Development Guide](./docs/DEVELOPMENT.md) for advanced usage
-- Follow [@Jiaxi_Cui](https://x.com/Jiaxi_Cui) for updates
+### Flow
 
-## 🛡️ Security
+1. **Message Reception**: Bot polls Telegram for new messages
+2. **Authorization**: Checks if user/chat is allowed
+3. **Command Execution**: Sends command to Claude CLI
+4. **Streaming Response**: Real-time updates via message editing
+5. **Formatting**: Intelligent response formatting
+6. **Delivery**: Final formatted response to user
 
-- ✅ **Sender Whitelist**: Only authorized emails can send commands
-- ✅ **Session Isolation**: Each token controls only its specific session
-- ✅ **Auto Expiration**: Sessions timeout automatically
+## Requirements
 
-## 🤝 Contributing
+- Python 3.7+
+- Claude CLI installed and configured
+- Telegram Bot Token
+- Internet connection
 
-Found a bug or have a feature request? 
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## License
+
+MIT License - feel free to use and modify!
+
+## Support
 
 - 🐛 **Issues**: [GitHub Issues](https://github.com/JessyTsui/Claude-Code-Remote/issues)
-- 🐦 **Updates**: Follow [@Jiaxi_Cui](https://x.com/Jiaxi_Cui) on Twitter
 - 💬 **Discussions**: Share your use cases and improvements
-
-## 📄 License
-
-MIT License - Feel free to use and modify!
+- 📧 **Contact**: Create an issue for support requests
 
 ---
 
-**🚀 Make Claude Code truly remote and accessible from anywhere!**
+**🚀 Make Claude Code truly remote with Telegram bot control!**
 
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=JessyTsui/Claude-Code-Remote&type=Date)](https://star-history.com/#JessyTsui/Claude-Code-Remote&Date)
-
-⭐ **Star this repo** if it helps you code more efficiently!
-
-> 💡 **Tip**: Share your remote coding setup on Twitter and tag [@Jiaxi_Cui](https://x.com/Jiaxi_Cui) - we love seeing how developers use Claude Code Remote!
+> 💡 **Tip**: This bot is perfect for remote development, long-running tasks, and mobile Claude access!

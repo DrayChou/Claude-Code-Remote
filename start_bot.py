@@ -12,9 +12,9 @@ def main():
     # 检查.env文件是否存在
     if not os.path.exists('.env'):
         print("❌ 未找到.env文件")
-        print("请复制 python.env.example 为 .env 并配置您的设置")
+        print("请复制 .env.example 为 .env 并配置您的设置")
         print("示例:")
-        print("  cp python.env.example .env")
+        print("  cp .env.example .env")
         print("  # 然后编辑 .env 文件设置您的 TELEGRAM_BOT_TOKEN 和 CLAUDE_CLI_PATH")
         return 1
     
