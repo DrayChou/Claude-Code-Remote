@@ -9,7 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
 const TmuxMonitor = require('../../utils/tmux-monitor');
-const { execSync } = require('child_process');
+const { spawn } = require('child_process');
 
 class TelegramChannel extends NotificationChannel {
     constructor(config = {}) {
@@ -52,18 +52,41 @@ class TelegramChannel extends NotificationChannel {
     }
 
     _getCurrentTmuxSession() {
-        try {
-            // Try to get current tmux session
-            const tmuxSession = execSync('tmux display-message -p "#S"', { 
-                encoding: 'utf8',
-                stdio: ['ignore', 'pipe', 'ignore']
-            }).trim();
-            
-            return tmuxSession || null;
-        } catch (error) {
-            // Not in a tmux session or tmux not available
-            return null;
-        }
+        return new Promise((resolve) => {
+            try {
+                // Try to get current tmux session using spawn
+                const child = spawn('tmux', ['display-message', '-p', '#S'], { 
+                    stdio: ['ignore', 'pipe', 'ignore']
+                });
+                
+                let output = '';
+                
+                child.stdout.on('data', (data) => {
+                    output += data.toString('utf8');
+                });
+                
+                child.on('close', (code) => {
+                    if (code === 0) {
+                        resolve(output.trim() || null);
+                    } else {
+                        resolve(null);
+                    }
+                });
+                
+                child.on('error', () => {
+                    resolve(null);
+                });
+                
+                // Set timeout
+                setTimeout(() => {
+                    child.kill();
+                    resolve(null);
+                }, 2000);
+                
+            } catch (error) {
+                resolve(null);
+            }
+        });
     }
 
     async _getBotUsername() {
@@ -98,7 +121,7 @@ class TelegramChannel extends NotificationChannel {
         const token = this._generateToken();
         
         // Get current tmux session and conversation content
-        const tmuxSession = this._getCurrentTmuxSession();
+        const tmuxSession = await this._getCurrentTmuxSession();
         if (tmuxSession && !notification.metadata) {
             const conversation = this.tmuxMonitor.getRecentConversation(tmuxSession);
             notification.metadata = {
@@ -134,7 +157,7 @@ class TelegramChannel extends NotificationChannel {
         ];
         
         const requestData = {
-            chat_id: chatId,
+            chat_id: parseInt(chatId) || chatId,
             text: messageText,
             parse_mode: 'Markdown',
             reply_markup: {

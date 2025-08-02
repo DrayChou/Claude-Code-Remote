@@ -76,22 +76,25 @@ class DesktopChannel extends NotificationChannel {
 
     _sendWindows(title, message, sound) {
         try {
-            const script = `
-            [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-            $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-            $xml = [xml] $template.GetXml()
-            $xml.toast.visual.binding.text[0].AppendChild($xml.CreateTextNode("${title}")) > $null
-            $xml.toast.visual.binding.text[1].AppendChild($xml.CreateTextNode("${message}")) > $null
-            $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-            [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Claude-Code-Remote").Show($toast)
-            `;
+            // Use msg command - simple and reliable
+            const sanitizedTitle = title.replace(/[<>"|&^]/g, '').substring(0, 100);
+            const sanitizedMessage = message.replace(/[<>"|&^]/g, '').substring(0, 200);
             
-            execSync(`powershell -Command "${script}"`, { timeout: 5000 });
+            // Use msg command to current session
+            execSync(`msg * "${sanitizedTitle}: ${sanitizedMessage}"`, { timeout: 5000 });
             this._playSound(sound);
             return true;
-        } catch (error) {
-            this.logger.error('Windows notification failed:', error.message);
-            return false;
+        } catch (msgError) {
+            try {
+                // Fallback to echo with timeout (simple console notification)
+                const fallbackMessage = `${title}: ${message}`;
+                execSync(`echo Claude Code notification: ${fallbackMessage.replace(/[<>"|&^]/g, '')}`, { timeout: 2000 });
+                this._playSound(sound);
+                return true;
+            } catch (error) {
+                this.logger.error('Windows notification failed:', error.message);
+                return false;
+            }
         }
     }
 

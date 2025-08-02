@@ -1,0 +1,11 @@
+{
+  "EXAMPLE123": {
+    "type": "pty",
+    "createdAt": 1754000000,
+    "expiresAt": 1754086400,
+    "cwd": "/path/to/working/directory",
+    "sessionId": "uuid-session-id",
+    "tmuxSession": "tmux-session-name",
+    "description": "status - Project Name"
+  }
+}

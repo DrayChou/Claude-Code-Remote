@@ -186,20 +186,46 @@ class TelegramPollingHandler {
     }
 
     async _sendMessage(chatId, text, options = {}) {
+        if (!chatId) {
+            this.logger.error('ChatId is required but not provided for message');
+            return false;
+        }
+
         try {
             const response = await this.httpClient.post(`/bot${this.config.botToken}/sendMessage`, {
-                chat_id: chatId,
+                chat_id: parseInt(chatId) || chatId,
                 text: text,
                 ...options
             });
             
             if (response.status === 200 && response.data.ok) {
+                this.logger.debug(`Message sent successfully to chat ${chatId}, message ID: ${response.data.result.message_id}`);
                 return response.data.result;
             } else {
+                this.logger.error(`Message send failed - Status: ${response.status}, Data:`, response.data);
                 return false;
             }
         } catch (error) {
-            this.logger.error('Failed to send message:', error.message);
+            let errorMessage = error.message;
+            
+            if (error.response) {
+                const status = error.response.status;
+                const description = error.response.data?.description || error.response.statusText;
+                errorMessage = `HTTP ${status}: ${description}`;
+                
+                // 记录详细的请求信息以便调试
+                this.logger.error(`Failed to send message - Status: ${status}, Description: ${description}`);
+                if (status === 400) {
+                    this.logger.debug('Request data that caused 400 error:', JSON.stringify({
+                        chat_id: parseInt(chatId) || chatId,
+                        text: text?.substring?.(0, 100) + (text?.length > 100 ? '...' : ''),
+                        ...options
+                    }, null, 2));
+                }
+            } else {
+                this.logger.error('Failed to send message:', errorMessage);
+            }
+            
             return false;
         }
     }
@@ -254,12 +280,39 @@ class TelegramPollingHandler {
         try {
             // 注入命令到 tmux 会话
             const tmuxSession = session.tmuxSession || 'default';
-            await this.injector.injectCommand(command, tmuxSession);
+            
+            // 检查是否是PTY模式但session没有ptyPath
+            if (this.injector.mode === 'pty') {
+                // 在PTY模式下，尝试使用tmux session名称而不是token
+                await this.injector.injectCommand(command, tmuxSession);
+            } else {
+                // tmux模式下直接使用tmux session
+                await this.injector.injectCommand(command, tmuxSession);
+            }
             
             // 发送确认消息
-            await this._sendMessage(chatId, 
-                `✅ *Command sent successfully*\n\n📝 *Command:* ${command}\n🖥️ *Session:* ${tmuxSession}\n\nClaude is now processing your request...`,
-                { parse_mode: 'Markdown' });
+            let confirmMessage = `✅ *Command sent successfully*\n\n📝 *Command:* ${command}\n🖥️ *Session:* ${tmuxSession}`;
+            
+            // 检查执行环境和模式
+            if (process.platform === 'win32' && this.injector.mode === 'pty') {
+                const windowsMode = process.env.WINDOWS_INJECTION_MODE || 'auto';
+                if (windowsMode === 'file-only') {
+                    confirmMessage += `\n\n💡 *Note:* Command saved to file for manual execution.\nLocation: \`src/data/tmux-captures/\``;
+                } else {
+                    confirmMessage += `\n\n🚀 *Command executed automatically!*\n💡 Check new PowerShell window or terminal for output.`;
+                }
+            } else {
+                confirmMessage += `\n\nClaude is now processing your request...`;
+            }
+            
+            const messageSent = await this._sendMessage(chatId, confirmMessage, { parse_mode: 'Markdown' });
+            
+            if (!messageSent) {
+                this.logger.warn(`Failed to send confirmation message to user ${chatId}, but command was injected successfully`);
+                // 尝试发送简化消息
+                const fallbackMessage = `✅ Command received: ${command.substring(0, 50)}${command.length > 50 ? '...' : ''}`;
+                await this._sendMessage(chatId, fallbackMessage);
+            }
             
             // 记录命令执行
             this.logger.info(`Command injected - User: ${chatId}, Token: ${token}, Command: ${command}`);
@@ -349,6 +402,176 @@ class TelegramPollingHandler {
         return true;
     }
 
+    async _handleCommandWithoutToken(chatId, command) {
+        this.logger.info(`🤖 Handling command without token for chat ${chatId}: ${command}`);
+        
+        // 1. 检查是否有活跃的token
+        const activeToken = this.activeTokens.get(chatId);
+        if (activeToken) {
+            const tokenAge = Date.now() - activeToken.timestamp;
+            if (tokenAge < 24 * 60 * 60 * 1000) {
+                // 使用活跃token
+                this.logger.info(`🔄 Using active token ${activeToken.token} for command`);
+                await this._processCommand(chatId, activeToken.token, command, { 
+                    source: 'auto_active_token' 
+                });
+                return;
+            } else {
+                // 清除过期token
+                this.activeTokens.delete(chatId);
+            }
+        }
+        
+        // 2. 查找最近的session
+        const recentSession = await this._findRecentSessionForChat(chatId);
+        if (recentSession && !this._isSessionExpired(recentSession)) {
+            // 使用最近的session token
+            this.logger.info(`🔄 Using recent session token ${recentSession.token} for command`);
+            
+            // 更新activeTokens
+            this.activeTokens.set(chatId, {
+                token: recentSession.token,
+                timestamp: Date.now(),
+                sessionId: recentSession.id
+            });
+            
+            await this._processCommand(chatId, recentSession.token, command, { 
+                source: 'auto_recent_session' 
+            });
+            return;
+        }
+        
+        // 3. 创建新的session和token
+        this.logger.info(`🆕 Creating new session for chat ${chatId}`);
+        const newSession = await this._createNewSessionForChat(chatId);
+        
+        if (newSession) {
+            // 发送新token信息给用户
+            const welcomeMessage = 
+                `🎉 *New session created!*\n\n` +
+                `🔑 *Your Token:* \`${newSession.token}\`\n\n` +
+                `✅ *I've processed your command:* ${command}\n\n` +
+                `💡 *Next time you can just send commands directly!*`;
+            
+            await this._sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
+            
+            // 处理命令
+            await this._processCommand(chatId, newSession.token, command, { 
+                source: 'auto_new_session' 
+            });
+        } else {
+            await this._sendMessage(chatId, 
+                `❌ *Failed to create session*\n\n` +
+                `Please try using the format: \`/cmd TOKEN command\`\n\n` +
+                `Use /help for more information.`,
+                { parse_mode: 'Markdown' });
+        }
+    }
+
+    async _findRecentSessionForChat(chatId) {
+        try {
+            const sessionFiles = fs.readdirSync(this.sessionsDir).filter(f => f.endsWith('.json'));
+            let recentSession = null;
+            let recentTime = 0;
+            
+            for (const file of sessionFiles) {
+                const sessionPath = path.join(this.sessionsDir, file);
+                try {
+                    const session = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
+                    
+                    // 检查是否是这个chat的session
+                    if (session.chatId === chatId || session.chatId === String(chatId)) {
+                        const sessionTime = session.createdAt || 0;
+                        if (sessionTime > recentTime) {
+                            recentTime = sessionTime;
+                            recentSession = session;
+                        }
+                    }
+                } catch (error) {
+                    this.logger.debug(`Failed to read session file ${file}:`, error.message);
+                }
+            }
+            
+            return recentSession;
+        } catch (error) {
+            this.logger.error('Error finding recent session:', error.message);
+            return null;
+        }
+    }
+
+    _isSessionExpired(session) {
+        const now = Math.floor(Date.now() / 1000);
+        return session.expiresAt < now;
+    }
+
+    async _createNewSessionForChat(chatId) {
+        try {
+            const sessionId = require('uuid').v4();
+            const token = this._generateToken();
+            
+            const session = {
+                id: sessionId,
+                token: token,
+                type: 'telegram',
+                created: new Date().toISOString(),
+                expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                createdAt: Math.floor(Date.now() / 1000),
+                expiresAt: Math.floor((Date.now() + 24 * 60 * 60 * 1000) / 1000),
+                tmuxSession: 'default',
+                project: 'Claude-Code-Remote-With-Telegram',
+                chatId: chatId,
+                autoCreated: true,
+                telegramConfig: {
+                    botToken: this.config.botToken ? '***configured***' : null,
+                    whitelist: this.config.whitelist || []
+                }
+            };
+
+            // 创建会话文件
+            const sessionFile = path.join(this.sessionsDir, `${sessionId}.json`);
+            fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
+            
+            // 同时写入 session-map.json
+            const sessionMapPath = path.join(__dirname, '../../data/session-map.json');
+            let sessionMap = {};
+            
+            if (fs.existsSync(sessionMapPath)) {
+                try {
+                    sessionMap = JSON.parse(fs.readFileSync(sessionMapPath, 'utf8'));
+                } catch (error) {
+                    this.logger.warn('Failed to read session-map.json, creating new one');
+                    sessionMap = {};
+                }
+            }
+            
+            sessionMap[token] = {
+                type: 'pty',
+                createdAt: session.createdAt,
+                expiresAt: session.expiresAt,
+                cwd: process.cwd(),
+                sessionId: sessionId,
+                tmuxSession: session.tmuxSession,
+                description: `auto-created - ${chatId}`
+            };
+            
+            fs.writeFileSync(sessionMapPath, JSON.stringify(sessionMap, null, 2));
+            
+            // 更新activeTokens
+            this.activeTokens.set(chatId, {
+                token: token,
+                timestamp: Date.now(),
+                sessionId: sessionId
+            });
+            
+            this.logger.info(`Auto-created session: ${sessionId}, token: ${token} for chat: ${chatId}`);
+            return session;
+            
+        } catch (error) {
+            this.logger.error('Failed to create new session:', error.message);
+            return null;
+        }
+    }
+
     async _handleIncomingMessage(message) {
         const text = message.text?.trim();
         const chatId = message.chat.id;
@@ -389,7 +612,12 @@ class TelegramPollingHandler {
             
             await this._processCommand(chatId, token, command, { messageId, source });
         } else {
-            await this._sendHelpMessage(chatId, true);
+            // 检查是否看起来像命令但没有token
+            if (this._looksLikeCommand(text)) {
+                await this._handleCommandWithoutToken(chatId, text);
+            } else {
+                await this._sendHelpMessage(chatId, true);
+            }
         }
     }
 
@@ -400,17 +628,17 @@ class TelegramPollingHandler {
             this.activeTokens.delete(chatId);
         }
 
+        const configType = this.config.groupId ? 'Group chat' : 
+                         this.config.chatId ? 'Private chat' : 
+                         'Dynamic private chats';
+                         
         const welcomeText = `👋 *Welcome to Claude Code Remote Bot!*\n\n` +
             `🎉 *Your session is ready!*\n\n` +
             `🚀 *How to send commands:*\n` +
             `• Traditional: \`/cmd TOKEN command\`\n` +
             `• Simple: \`TOKEN command\`\n` +
             `• Reply: Reply to any bot message\n\n` +
-            `💡 *Bot configured for: ${
-                this.config.groupId ? 'Group chat' : 
-                this.config.chatId ? 'Private chat' : 
-                'Dynamic private chats'
-            }\n\n` +
+            `💡 *Bot configured for:* ${configType}\n\n` +
             `Use \`/help\` for detailed instructions.`;
             
         await this._sendMessage(chatId, welcomeText, { parse_mode: 'Markdown' });
@@ -425,21 +653,27 @@ class TelegramPollingHandler {
         
         helpText += `🆘 *Claude Code Remote Bot Help*\n\n` +
             `*🎯 Ways to Send Commands:*\n\n` +
-            `*1️⃣ Traditional Format:*\n` +
+            `*1️⃣ Smart Mode (Recommended):*\n` +
+            `Just send your command directly!\n` +
+            `Example: \`analyze this code\`\n` +
+            `• Bot automatically manages tokens for you\n` +
+            `• Creates session if needed\n\n` +
+            `*2️⃣ Traditional Format:*\n` +
             `\`/cmd TOKEN command\`\n` +
             `Example: \`/cmd ABC12345 analyze this code\`\n\n` +
-            `*2️⃣ Simple Format:*\n` +
+            `*3️⃣ Simple Format:*\n` +
             `\`TOKEN command\`\n` +
             `Example: \`XYZ89012 create a new function\`\n\n` +
-            `*3️⃣ Reply Format:*\n` +
+            `*4️⃣ Reply Format:*\n` +
             `Reply directly to any bot message\n\n` +
             `*📝 Token Info:*\n` +
             `• Tokens are 8-character codes\n` +
-            `• Valid for 24 hours\n\n` +
+            `• Valid for 24 hours\n` +
+            `• Auto-generated when needed\n\n` +
             `*🛠️ Other Commands:*\n` +
             `• \`/start\` - Reset session\n` +
             `• \`/help\` - This help message\n\n` +
-            `*💡 Pro Tip:* After receiving a notification, you can simply reply to it!`;
+            `*💡 Pro Tip:* Just send commands naturally - the bot handles tokens automatically!`;
             
         await this._sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
     }
@@ -637,17 +871,49 @@ class TelegramPollingHandler {
             }
         };
 
+        // 创建会话文件
         const sessionFile = path.join(this.sessionsDir, `${sessionId}.json`);
         fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
         
-        this.logger.debug(`Telegram notification session created: ${sessionId}`);
+        // 同时写入 session-map.json 以便 PTY injector 能找到会话
+        const sessionMapPath = path.join(__dirname, '../../data/session-map.json');
+        let sessionMap = {};
+        
+        if (fs.existsSync(sessionMapPath)) {
+            try {
+                sessionMap = JSON.parse(fs.readFileSync(sessionMapPath, 'utf8'));
+            } catch (error) {
+                this.logger.warn('Failed to read session-map.json, creating new one');
+                sessionMap = {};
+            }
+        }
+        
+        // 创建 PTY injector 需要的会话条目
+        sessionMap[token] = {
+            type: 'pty',
+            createdAt: session.createdAt,
+            expiresAt: session.expiresAt,
+            cwd: process.cwd(),
+            sessionId: sessionId,
+            tmuxSession: session.tmuxSession,
+            description: `waiting - ${notification.project || 'Unknown'}`
+        };
+        
+        fs.writeFileSync(sessionMapPath, JSON.stringify(sessionMap, null, 2));
+        
+        this.logger.debug(`Telegram notification session created: ${sessionId}, token: ${token}`);
         return { sessionId, token };
     }
 
     // 发送通知消息的方法
     async sendNotificationMessage(chatId, messageText, token, sessionId) {
+        if (!chatId) {
+            this.logger.error('ChatId is required but not provided for notification');
+            return false;
+        }
+
         const requestData = {
-            chat_id: chatId,
+            chat_id: parseInt(chatId) || chatId,
             text: messageText,
             parse_mode: 'Markdown',
             reply_markup: {

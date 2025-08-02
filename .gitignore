@@ -48,13 +48,30 @@ build/
 # Temporary files
 tmp/
 temp/
-# Data files (session-specific, should not be committed)
-src/data/
+# Data files (runtime data, should not be committed)
+# Session data contains tokens and sensitive information
+src/data/session-map.json
+src/data/processed-messages.json
+src/data/subagent-activities.json
+src/data/sessions/
+src/data/tmux-captures/
+
+# Keep directory structure and example files
 !src/data/.gitkeep
+!src/data/sessions/.gitkeep
+!src/data/tmux-captures/.gitkeep
+!src/data/*.example.json
+
+# Legacy data directories
+data/
+session-map.json
+processed-messages.json
 
 # Claude configuration (user-specific)
 CLAUDE.md
 
-
+# Other generated files
 .lh/
 .specstory/
+.claude/
+.claude/settings.local.json

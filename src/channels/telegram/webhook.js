@@ -68,6 +68,11 @@ class TelegramChannel {
         }
     }
 
+    // 兼容性方法 - 支持旧的 send 方法调用
+    async send(notification) {
+        return await this.sendNotification(notification);
+    }
+
     // 测试连接
     async test() {
         try {

@@ -2,8 +2,53 @@
   "permissions": {
     "allow": [
       "Bash(mv:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(node:*)",
+      "Bash(git reset:*)",
+      "Bash(curl:*)",
+      "Bash(git checkout HEAD -- src/data/session-map.json src/data/sessions/cf2f3648-b9ad-48c5-8f21-ba57ebab2c52.json)",
+      "Bash(git checkout:*)",
+      "Bash(ls:*)",
+      "Bash(LOG_LEVEL=debug node claude-hook-notify.js completed)",
+      "Bash(git rm:*)",
+      "Bash(timeout:*)",
+      "Bash(tasklist:*)",
+      "Bash(taskkill:*)",
+      "Bash(powershell:*)",
+      "Bash(LOG_LEVEL=debug node test-telegram-notification.js)",
+      "Bash(del test-start-command.js test-direct-telegram.js test-fixed-start.js)",
+      "Bash(rm:*)",
+      "Bash(tmux list-sessions:*)",
+      "Bash(grep:*)",
+      "Bash(LOG_LEVEL=debug node start-telegram-smart.js)"
     ],
     "deny": []
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"D:\\Code\\Claude-Code-Remote-With-Telegram\\claude-hook-notify.js\" completed",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"D:\\Code\\Claude-Code-Remote-With-Telegram\\claude-hook-notify.js\" waiting",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
   }
 }

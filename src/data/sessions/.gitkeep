@@ -1,0 +1,2 @@
+# This directory stores session files with tokens and sensitive data
+# All .json files in this directory are ignored by git

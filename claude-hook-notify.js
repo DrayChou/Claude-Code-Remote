@@ -32,7 +32,7 @@ if (fs.existsSync(envPath)) {
     process.exit(1);
 }
 
-const TelegramChannel = require('./src/channels/telegram/telegram');
+const TelegramChannel = require('./src/channels/telegram/webhook');
 const DesktopChannel = require('./src/channels/local/desktop');
 const EmailChannel = require('./src/channels/email/smtp');
 
@@ -63,7 +63,14 @@ async function sendHookNotification() {
             
             if (telegramConfig.botToken && (telegramConfig.chatId || telegramConfig.groupId)) {
                 const telegramChannel = new TelegramChannel(telegramConfig);
-                channels.push({ name: 'Telegram', channel: telegramChannel });
+                
+                // Start the Telegram channel before using it
+                try {
+                    await telegramChannel.start();
+                    channels.push({ name: 'Telegram', channel: telegramChannel });
+                } catch (error) {
+                    console.log(`⚠️  Failed to start Telegram channel: ${error.message}`);
+                }
             }
         }
         

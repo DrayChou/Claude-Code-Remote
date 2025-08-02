@@ -117,6 +117,13 @@ class TelegramHybridHandler {
                 const messageText = this._generateNotificationMessage(notification, token);
                 const chatId = this.config.groupId || this.config.chatId;
                 
+                this.logger.debug(`Sending notification - groupId: ${this.config.groupId}, chatId: ${this.config.chatId}, final chatId: ${chatId}`);
+                
+                if (!chatId) {
+                    this.logger.error('No valid chatId found in config. Please set TELEGRAM_CHAT_ID or TELEGRAM_GROUP_ID in .env file');
+                    return false;
+                }
+                
                 return await this.handler.sendNotificationMessage(chatId, messageText, token, sessionId);
             } else {
                 // Webhook 模式需要实现通知发送逻辑
@@ -134,34 +141,40 @@ class TelegramHybridHandler {
         const status = type === 'completed' ? 'Completed' : 'Waiting for Input';
         
         let messageText = `${emoji} *Claude Task ${status}*\n`;
-        messageText += `*Project:* ${notification.project}\n`;
-        messageText += `*Session Token:* \`${token}\`\n\n`;
+        messageText += `*Project*: ${this._escapeMarkdownV2(notification.project)}\n`;
+        messageText += `*Session Token*: \`${token}\`\n\n`;
         
         if (notification.metadata) {
             if (notification.metadata.userQuestion) {
-                messageText += `📝 *Your Question:*\n${notification.metadata.userQuestion.substring(0, 200)}`;
+                messageText += `📝 *Your Question*:\n${this._escapeMarkdownV2(notification.metadata.userQuestion.substring(0, 200))}`;
                 if (notification.metadata.userQuestion.length > 200) {
-                    messageText += '...';
+                    messageText += '\\.\\.\\.';
                 }
                 messageText += '\n\n';
             }
             
             if (notification.metadata.claudeResponse) {
-                messageText += `🤖 *Claude Response:*\n${notification.metadata.claudeResponse.substring(0, 300)}`;
+                messageText += `🤖 *Claude Response*:\n${this._escapeMarkdownV2(notification.metadata.claudeResponse.substring(0, 300))}`;
                 if (notification.metadata.claudeResponse.length > 300) {
-                    messageText += '...';
+                    messageText += '\\.\\.\\.';
                 }
                 messageText += '\n\n';
             }
         }
         
-        messageText += `💬 *To send a command:*\n`;
+        messageText += `💬 *To send a command*:\n`;
         messageText += `• Reply to this message directly\n`;
         messageText += `• Send: \`${token} <your command>\`\n`;
         messageText += `• Send: \`/cmd ${token} <your command>\`\n\n`;
-        messageText += `💡 *Easiest way: Just reply to this message!*`;
+        messageText += `💡 *Easiest way*: Just reply to this message\\!`;
 
         return messageText;
+    }
+
+    _escapeMarkdownV2(text) {
+        if (!text) return '';
+        // Escape all special characters for MarkdownV2
+        return text.replace(/[\\._*\\[\\]()~`>#+=|{}.!-]/g, '\\\\$&');
     }
 
     async _sendWebhookNotification(notification) {
