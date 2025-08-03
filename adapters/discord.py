@@ -44,6 +44,20 @@ class DiscordAdapter(PlatformAdapter):
         self.allowed_channel_ids = config.get('allowed_channel_ids', [])
         self.allowed_guild_ids = config.get('allowed_guild_ids', [])
         
+        # Proxy configuration
+        self.http_proxy = os.getenv('HTTP_PROXY')
+        self.proxy_config = None
+        self.ssl_verify = True
+        
+        if self.http_proxy:
+            self.proxy_config = {
+                'http': self.http_proxy,
+                'https': self.http_proxy
+            }
+            self.ssl_verify = False  # Disable SSL verification when using proxy
+            logger.info(f"Discord proxy config: {self.proxy_config}, SSL verify: {self.ssl_verify}")
+            logger.info("Proxy detected, disabling SSL verification for Discord")
+        
         # Gateway for real-time events (optional)
         self.gateway_url = None
         self.sequence_number = None
@@ -118,8 +132,16 @@ class DiscordAdapter(PlatformAdapter):
             if after:
                 params['after'] = after
             
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, params=params) as response:
+            # Create connector with proxy and SSL settings
+            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
+            timeout = aiohttp.ClientTimeout(total=30)
+            
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                kwargs = {'headers': headers, 'params': params}
+                if self.proxy_config:
+                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
+                
+                async with session.get(url, **kwargs) as response:
                     if response.status == 200:
                         messages = await response.json()
                         return messages
@@ -203,8 +225,16 @@ class DiscordAdapter(PlatformAdapter):
                 'content': content
             }
             
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=data) as response:
+            # Create connector with proxy and SSL settings
+            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
+            timeout = aiohttp.ClientTimeout(total=30)
+            
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                kwargs = {'headers': headers, 'json': data}
+                if self.proxy_config:
+                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
+                
+                async with session.post(url, **kwargs) as response:
                     if response.status in [200, 201]:
                         result = await response.json()
                         message_id = result['id']
@@ -233,8 +263,16 @@ class DiscordAdapter(PlatformAdapter):
                 'content': content
             }
             
-            async with aiohttp.ClientSession() as session:
-                async with session.patch(url, headers=headers, json=data) as response:
+            # Create connector with proxy and SSL settings
+            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
+            timeout = aiohttp.ClientTimeout(total=30)
+            
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                kwargs = {'headers': headers, 'json': data}
+                if self.proxy_config:
+                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
+                
+                async with session.patch(url, **kwargs) as response:
                     if response.status == 200:
                         logger.debug(f"Successfully edited Discord message {message_id}")
                         return True
