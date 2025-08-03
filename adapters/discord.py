@@ -215,33 +215,44 @@ class DiscordAdapter(PlatformAdapter):
         logger.info("Discord adapter started listening (polling mode)")
         logger.info(f"Poll interval: {self.poll_interval} seconds")
         
-        last_message_id = None
+        # Per-channel last message tracking
+        channel_last_message_ids = {}
         
         while True:
             try:
                 # Get recent messages from allowed channels
                 for channel_id in self.allowed_channel_ids:
-                    messages = await self.get_channel_messages(channel_id, after=last_message_id)
+                    last_msg_id = channel_last_message_ids.get(channel_id)
+                    messages = await self.get_channel_messages(channel_id, after=last_msg_id, limit=10)
                     
                     if messages:
                         logger.info(f"Received {len(messages)} messages from channel {channel_id}")
                         
+                        # Process only new messages (not in processed list)
+                        new_messages = []
                         for message_data in reversed(messages):  # Process in chronological order
+                            message_id = message_data.get('id')
+                            if message_id and not self.is_message_processed(message_id):
+                                new_messages.append(message_data)
+                        
+                        logger.info(f"Found {len(new_messages)} new messages to process")
+                        
+                        for message_data in new_messages:
                             message = self.parse_message(message_data)
                             if message:
-                                # Check if message already processed
-                                if self.is_message_processed(message.message_id):
-                                    logger.debug(f"Discord message {message.message_id} already processed, skipping")
-                                    last_message_id = message.message_id
-                                    continue
-                                
                                 # Mark as processed before processing to avoid duplicates
                                 self.mark_message_processed(message.message_id)
                                 
                                 await self.process_discord_message(message)
-                                last_message_id = message.message_id
+                                
+                                # Update last message ID for this channel
+                                channel_last_message_ids[channel_id] = message.message_id
                             else:
                                 logger.debug("Skipping invalid message")
+                        
+                        # Update last message ID even if no valid messages processed
+                        if messages:
+                            channel_last_message_ids[channel_id] = messages[0]['id']
                 
                 # Wait for next poll
                 await asyncio.sleep(self.poll_interval)

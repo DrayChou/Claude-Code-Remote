@@ -34,7 +34,7 @@ routes:
     # 广播命令示例 - 一对多
     "/all":
       handler: "claude"
-      targets: ["origin", "discord:733691253492809731"]
+      targets: ["all_platforms"]
       
     "/dev":
       handler: "claude_dev"
@@ -177,6 +177,7 @@ target_aliases:
   
   # 特殊组合别名
   all_channels: ["telegram:dev_chat", "discord:general_chat", "feishu:dev_group"]
+  all_platforms: ["telegram:213800199", "discord:733691253492809731"]
 
 # 全局设置
 global:
