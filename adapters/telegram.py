@@ -332,6 +332,42 @@ class TelegramAdapter(PlatformAdapter):
             logger.error(f"Error sending plain text message: {e}")
             return None
     
+    def edit_message_plain(self, chat_id: int, message_id: int, text: str) -> bool:
+        """Edit message text in Telegram"""
+        try:
+            logger.debug(f"Editing message {message_id} in chat {chat_id}")
+            
+            url = f"{self.api_base}/editMessageText"
+            data = {
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'text': text
+            }
+            
+            # 使用代理时禁用SSL验证
+            ssl_verify = not bool(self.proxies)
+            
+            response = requests.post(
+                url, 
+                json=data, 
+                timeout=30, 
+                proxies=self.proxies, 
+                verify=ssl_verify
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            if result.get('ok'):
+                logger.debug(f"Successfully edited message {message_id}")
+                return True
+            else:
+                logger.error(f"Telegram edit message failed: {result}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+            return False
+    
     def split_message(self, text: str) -> List[str]:
         """Smart message splitting for long messages"""
         if len(text) <= self.max_message_length:

@@ -431,6 +431,9 @@ class MessageRouter:
                 json_data.get('message') and 
                 json_data['message'].get('content')):
                 
+                # Clear previous parts since Claude streaming sends complete content each time
+                assistant_parts.clear()
+                
                 for content in json_data['message']['content']:
                     if content.get('type') == 'text' and content.get('text'):
                         text_content = content['text']

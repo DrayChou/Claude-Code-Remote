@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Any
 import aiohttp
 from dataclasses import dataclass
 from adapters.base import PlatformAdapter, StreamingContext
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,24 @@ class DiscordAdapter(PlatformAdapter):
         self.sequence_number = None
         self.session_id = None
         
+        # Retry configuration
+        self.max_retries = 3
+        self.base_delay = 1.0  # Base delay for exponential backoff
+        self.max_delay = 30.0  # Maximum delay between retries
+        
+        # Proxy health monitoring
+        self.proxy_healthy = True
+        self.proxy_last_check = 0
+        self.proxy_check_interval = 300  # Check proxy health every 5 minutes
+        self.proxy_consecutive_failures = 0
+        self.max_proxy_failures = 5  # Mark proxy as unhealthy after 5 consecutive failures
+        
+        # Circuit breaker for severe proxy issues
+        self.circuit_breaker_open = False
+        self.circuit_breaker_open_time = 0
+        self.circuit_breaker_timeout = 600  # 10 minutes circuit breaker timeout
+        self.severe_failure_threshold = 10  # Open circuit after 10 consecutive failures
+        
         logger.info(f"Discord adapter initialized")
         if self.bot_id:
             logger.info(f"Bot ID: {self.bot_id}, username: {self.bot_username}")
@@ -113,6 +132,84 @@ class DiscordAdapter(PlatformAdapter):
         except Exception as e:
             logger.error(f"Error getting Discord bot info: {e}")
     
+    async def _check_proxy_health(self) -> bool:
+        """Check if proxy is healthy by making a simple request"""
+        if not self.proxy_config:
+            return True  # No proxy configured, assume healthy
+        
+        current_time = time.time()
+        if current_time - self.proxy_last_check < self.proxy_check_interval:
+            return self.proxy_healthy
+        
+        try:
+            # Simple health check - GET Discord API base endpoint
+            url = f"{self.api_base}/gateway"
+            headers = {'User-Agent': 'DiscordBot (HealthCheck, 1.0)'}
+            
+            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
+            timeout = aiohttp.ClientTimeout(total=10)  # Shorter timeout for health check
+            
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                kwargs = {'headers': headers}
+                if self.proxy_config:
+                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
+                
+                async with session.get(url, **kwargs) as response:
+                    if response.status == 200:
+                        self.proxy_healthy = True
+                        self.proxy_consecutive_failures = 0
+                        logger.debug("Proxy health check passed")
+                    else:
+                        self._handle_proxy_failure(f"Health check failed: HTTP {response.status}")
+        
+        except Exception as e:
+            self._handle_proxy_failure(f"Health check exception: {e}")
+        
+        self.proxy_last_check = current_time
+        return self.proxy_healthy
+    
+    def _handle_proxy_failure(self, error_msg: str):
+        """Handle proxy failure and update health status"""
+        self.proxy_consecutive_failures += 1
+        logger.warning(f"Proxy failure #{self.proxy_consecutive_failures}: {error_msg}")
+        
+        if self.proxy_consecutive_failures >= self.max_proxy_failures:
+            self.proxy_healthy = False
+            logger.error(f"Proxy marked as unhealthy after {self.proxy_consecutive_failures} consecutive failures")
+        
+        # Circuit breaker logic for severe failures
+        if self.proxy_consecutive_failures >= self.severe_failure_threshold:
+            self.circuit_breaker_open = True
+            self.circuit_breaker_open_time = time.time()
+            logger.error(f"Circuit breaker opened after {self.proxy_consecutive_failures} failures. Blocking requests for {self.circuit_breaker_timeout}s")
+        
+    def _reset_proxy_health(self):
+        """Reset proxy health status after successful request"""
+        if not self.proxy_healthy or self.proxy_consecutive_failures > 0:
+            logger.info("Proxy health restored")
+            self.proxy_healthy = True
+            self.proxy_consecutive_failures = 0
+            
+        # Reset circuit breaker on successful request
+        if self.circuit_breaker_open:
+            logger.info("Circuit breaker closed - requests restored")
+            self.circuit_breaker_open = False
+            self.circuit_breaker_open_time = 0
+    
+    def _is_circuit_breaker_open(self) -> bool:
+        """Check if circuit breaker is open"""
+        if not self.circuit_breaker_open:
+            return False
+        
+        # Check if timeout has passed
+        if time.time() - self.circuit_breaker_open_time >= self.circuit_breaker_timeout:
+            logger.info("Circuit breaker timeout expired, attempting to close")
+            self.circuit_breaker_open = False
+            self.circuit_breaker_open_time = 0
+            return False
+        
+        return True
+    
     async def listen(self):
         """Listen for Discord messages - polling method"""
         logger.info("Discord adapter started listening (polling mode)")
@@ -154,7 +251,14 @@ class DiscordAdapter(PlatformAdapter):
                 break
             except Exception as e:
                 logger.error(f"Error in Discord listening loop: {e}")
-                await asyncio.sleep(self.poll_interval)
+                logger.error(f"Exception type: {type(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                
+                # Longer wait on error to avoid spam
+                error_wait = min(self.poll_interval * 3, 30)
+                logger.info(f"Waiting {error_wait}s before retrying due to error")
+                await asyncio.sleep(error_wait)
     
     async def send_message(self, channel_id: str, content: str):
         """Send message to Discord channel"""
@@ -170,8 +274,97 @@ class DiscordAdapter(PlatformAdapter):
             logger.error(f"Error sending message to Discord channel {channel_id}: {e}")
             return False
     
+    async def _make_request_with_retry(self, method: str, url: str, **kwargs) -> Optional[Dict[str, Any]]:
+        """Make HTTP request with retry mechanism and exponential backoff"""
+        # Check circuit breaker first
+        if self._is_circuit_breaker_open():
+            logger.warning("Circuit breaker is open, blocking request")
+            return None
+            
+        # Check proxy health before making requests
+        if self.proxy_config and not await self._check_proxy_health():
+            logger.warning("Proxy is unhealthy, skipping request")
+            return None
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Create connector with proxy and SSL settings
+                connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
+                timeout = aiohttp.ClientTimeout(total=60)
+                
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                    if self.proxy_config:
+                        kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
+                    
+                    if method.upper() == 'GET':
+                        async with session.get(url, **kwargs) as response:
+                            # Check if response is successful
+                            if response.status == 200:
+                                self._reset_proxy_health()  # Reset proxy health on success
+                                return {'status': response.status, 'data': await response.json()}
+                            elif response.status < 500:  # Client error, don't retry
+                                return {'status': response.status, 'error': await response.text()}
+                            else:  # Server error, retry
+                                raise aiohttp.ClientResponseError(
+                                    request_info=response.request_info,
+                                    history=response.history,
+                                    status=response.status
+                                )
+                    
+                    elif method.upper() == 'POST':
+                        async with session.post(url, **kwargs) as response:
+                            if response.status in [200, 201]:
+                                self._reset_proxy_health()  # Reset proxy health on success
+                                return {'status': response.status, 'data': await response.json()}
+                            elif response.status < 500:
+                                return {'status': response.status, 'error': await response.text()}
+                            else:
+                                raise aiohttp.ClientResponseError(
+                                    request_info=response.request_info,
+                                    history=response.history,
+                                    status=response.status
+                                )
+                    
+                    elif method.upper() == 'PATCH':
+                        async with session.patch(url, **kwargs) as response:
+                            if response.status == 200:
+                                self._reset_proxy_health()  # Reset proxy health on success
+                                return {'status': response.status, 'data': await response.json()}
+                            elif response.status < 500:
+                                return {'status': response.status, 'error': await response.text()}
+                            else:
+                                raise aiohttp.ClientResponseError(
+                                    request_info=response.request_info,
+                                    history=response.history,
+                                    status=response.status
+                                )
+            
+            except (asyncio.TimeoutError, aiohttp.ClientError, ConnectionError) as e:
+                # Track proxy failure if using proxy
+                if self.proxy_config:
+                    self._handle_proxy_failure(f"Request failed: {e}")
+                
+                if attempt == self.max_retries:
+                    logger.error(f"Request failed after {self.max_retries + 1} attempts: {e}")
+                    raise
+                
+                # Calculate delay with exponential backoff and jitter
+                delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+                jitter = random.uniform(0.1, 0.5) * delay
+                total_delay = delay + jitter
+                
+                logger.warning(f"Request attempt {attempt + 1} failed: {e}. Retrying in {total_delay:.2f}s...")
+                await asyncio.sleep(total_delay)
+            
+            except Exception as e:
+                # Don't retry for non-network errors
+                logger.error(f"Non-retryable error in request: {e}")
+                raise
+        
+        return None
+    
     async def get_channel_messages(self, channel_id: str, limit: int = 50, after: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get messages from Discord channel"""
+        """Get messages from Discord channel with retry mechanism"""
         try:
             url = f"{self.api_base}/channels/{channel_id}/messages"
             headers = {
@@ -183,22 +376,15 @@ class DiscordAdapter(PlatformAdapter):
             if after:
                 params['after'] = after
             
-            # Create connector with proxy and SSL settings
-            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
-            timeout = aiohttp.ClientTimeout(total=60)  # Increase timeout to 60 seconds
-            
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                kwargs = {'headers': headers, 'params': params}
-                if self.proxy_config:
-                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
-                
-                async with session.get(url, **kwargs) as response:
-                    if response.status == 200:
-                        messages = await response.json()
-                        return messages
-                    else:
-                        logger.error(f"Discord API error: {response.status} - {await response.text()}")
-                        return []
+            result = await self._make_request_with_retry('GET', url, headers=headers, params=params)
+            if result and result['status'] == 200:
+                return result['data']
+            elif result:
+                logger.error(f"Discord API error: {result['status']} - {result.get('error', 'Unknown error')}")
+                return []
+            else:
+                logger.error("Failed to get response from Discord API")
+                return []
                         
         except Exception as e:
             logger.error(f"Failed to get Discord messages: {e}")
@@ -309,7 +495,7 @@ class DiscordAdapter(PlatformAdapter):
         return False
     
     async def send_message_plain(self, channel_id: str, content: str) -> Optional[str]:
-        """Send plain text message to Discord"""
+        """Send plain text message to Discord with retry mechanism"""
         try:
             logger.info(f"Sending message to Discord channel {channel_id}: {content[:100]}...")
             
@@ -322,24 +508,18 @@ class DiscordAdapter(PlatformAdapter):
                 'content': content
             }
             
-            # Create connector with proxy and SSL settings
-            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
-            timeout = aiohttp.ClientTimeout(total=60)  # Increase timeout to 60 seconds
-            
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                kwargs = {'headers': headers, 'json': data}
-                if self.proxy_config:
-                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
-                
-                async with session.post(url, **kwargs) as response:
-                    if response.status in [200, 201]:
-                        result = await response.json()
-                        message_id = result['id']
-                        logger.info(f"Message sent successfully to Discord channel {channel_id}, message ID: {message_id}")
-                        return message_id
-                    else:
-                        logger.error(f"Discord send message failed: {response.status} - {await response.text()}")
-                        return None
+            result = await self._make_request_with_retry('POST', url, headers=headers, json=data)
+            if result and result['status'] in [200, 201]:
+                message_data = result['data']
+                message_id = message_data['id']
+                logger.info(f"Message sent successfully to Discord channel {channel_id}, message ID: {message_id}")
+                return message_id
+            elif result:
+                logger.error(f"Discord send message failed: {result['status']} - {result.get('error', 'Unknown error')}")
+                return None
+            else:
+                logger.error("Failed to get response from Discord API")
+                return None
                         
         except Exception as e:
             logger.error(f"Error sending Discord message: {e}")
@@ -349,7 +529,7 @@ class DiscordAdapter(PlatformAdapter):
             return None
     
     async def edit_message_plain(self, channel_id: str, message_id: str, content: str) -> bool:
-        """Edit Discord message"""
+        """Edit Discord message with retry mechanism"""
         try:
             if len(content) > self.max_message_length:
                 content = content[:self.max_message_length - 3] + "..."
@@ -363,22 +543,16 @@ class DiscordAdapter(PlatformAdapter):
                 'content': content
             }
             
-            # Create connector with proxy and SSL settings
-            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
-            timeout = aiohttp.ClientTimeout(total=60)  # Increase timeout to 60 seconds
-            
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                kwargs = {'headers': headers, 'json': data}
-                if self.proxy_config:
-                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
-                
-                async with session.patch(url, **kwargs) as response:
-                    if response.status == 200:
-                        logger.debug(f"Successfully edited Discord message {message_id}")
-                        return True
-                    else:
-                        logger.error(f"Discord edit message failed: {response.status} - {await response.text()}")
-                        return False
+            result = await self._make_request_with_retry('PATCH', url, headers=headers, json=data)
+            if result and result['status'] == 200:
+                logger.debug(f"Successfully edited Discord message {message_id}")
+                return True
+            elif result:
+                logger.error(f"Discord edit message failed: {result['status']} - {result.get('error', 'Unknown error')}")
+                return False
+            else:
+                logger.error("Failed to get response from Discord API")
+                return False
                         
         except Exception as e:
             logger.error(f"Error editing Discord message: {e}")
@@ -467,7 +641,11 @@ class DiscordAdapter(PlatformAdapter):
     
     # Streaming mode support
     async def supports_streaming(self) -> bool:
-        """Discord supports message editing, so streaming is supported"""
+        """Discord supports message editing, but disable if proxy is unhealthy"""
+        # Disable streaming if proxy is unhealthy to avoid timeout issues during streaming
+        if self.proxy_config and not self.proxy_healthy:
+            logger.info("Streaming disabled due to unhealthy proxy")
+            return False
         return True
     
     async def start_streaming_response(self, channel_id: str, initial_message: str = "🤔 Thinking...") -> Optional[StreamingContext]:

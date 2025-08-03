@@ -43,8 +43,9 @@ class PlatformAdapter(ABC):
         """Initialize adapter with router reference"""
         self.router = router
         self.platform_name = self.__class__.__name__.lower().replace('adapter', '')
-        self.processed_messages_file = f"processed_messages_{self.platform_name}.json"
+        self.processed_messages_file = os.path.abspath(f"processed_messages_{self.platform_name}.json")
         self.processed_messages: Set[str] = set()
+        print(f"[{self.platform_name}] Message state file: {self.processed_messages_file}")
         self._load_processed_messages()
     
     @abstractmethod
@@ -118,8 +119,10 @@ class PlatformAdapter(ABC):
     async def on_message(self, platform: str, user_id: str, chat_id: str, content: str):
         """Universal message handler - called when message is received"""
         try:
-            # Check if streaming is supported and try streaming mode first
-            if await self.supports_streaming():
+            # Check if streaming is supported and network is healthy
+            force_degraded_mode = getattr(self, 'force_degraded_mode', False)
+            
+            if await self.supports_streaming() and not force_degraded_mode:
                 try:
                     # Try streaming mode processing
                     if hasattr(self.router, 'process_with_streaming'):
@@ -132,8 +135,13 @@ class PlatformAdapter(ABC):
                             return
                 except Exception as e:
                     print(f"Streaming mode failed, falling back to normal mode: {e}")
+                    # Enable degraded mode temporarily after streaming failure
+                    self.force_degraded_mode = True
+                    # Schedule re-enabling streaming after some time
+                    import asyncio
+                    asyncio.create_task(self._re_enable_streaming())
             
-            # Fall back to normal processing
+            # Fall back to normal processing (degraded mode)
             response = await self.router.process(platform, user_id, chat_id, content)
             
             # Send response to all targets
@@ -143,6 +151,13 @@ class PlatformAdapter(ABC):
         except Exception as e:
             error_msg = f"Error processing message: {str(e)}"
             await self.send_message(chat_id, error_msg)
+    
+    async def _re_enable_streaming(self):
+        """Re-enable streaming mode after a delay"""
+        import asyncio
+        await asyncio.sleep(300)  # Wait 5 minutes before re-enabling streaming
+        self.force_degraded_mode = False
+        print(f"[{self.platform_name}] Streaming mode re-enabled after degraded mode period")
     
     async def send_to_target(self, target: str, content: str):
         """Send message to specific target (format: platform:chat_id)"""
