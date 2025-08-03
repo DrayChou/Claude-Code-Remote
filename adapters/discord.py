@@ -400,7 +400,14 @@ class DiscordAdapter(PlatformAdapter):
                 return None
             
             # Skip bot messages
-            if message_data.get('author', {}).get('bot', False):
+            author = message_data.get('author', {})
+            if author.get('bot', False):
+                logger.debug(f"Skipping bot message (bot=True)")
+                return None
+            
+            # Also skip messages from our own bot (double check)
+            if self.bot_id and author.get('id') == self.bot_id:
+                logger.info(f"Skipping message from our own bot (ID: {self.bot_id})")
                 return None
             
             # Check if bot is mentioned (only process if mentioned)
@@ -461,7 +468,7 @@ class DiscordAdapter(PlatformAdapter):
     async def process_discord_message(self, message: DiscordMessage):
         """Process individual Discord message"""
         try:
-            logger.info(f"Processing message from @{message.author_username} (ID:{message.author_id}): {message.content[:50]}...")
+            logger.info(f"DISCORD PROCESSING: Message from @{message.author_username} (ID:{message.author_id}): {message.content[:50]}...")
             
             # Check authorization
             if not self.is_authorized(message):
@@ -469,6 +476,7 @@ class DiscordAdapter(PlatformAdapter):
                 return  # Silent ignore
             
             # Process through router
+            logger.info(f"DISCORD PROCESSING: Sending to router for processing...")
             await self.on_message("discord", message.author_id, message.channel_id, message.content)
                 
         except Exception as e:

@@ -181,6 +181,7 @@ class PlatformAdapter(ABC):
                 raise ValueError(f"No adapter found for platform: {platform}")
             
             # Send message directly without streaming to avoid duplicate initial messages
+            print(f"TARGET SEND: Sending to {platform}:{chat_id}, content: {content[:100]}...")
             await adapter.send_message(chat_id, content)
             
         except Exception as e:

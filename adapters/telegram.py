@@ -218,6 +218,12 @@ class TelegramAdapter(PlatformAdapter):
             if 'text' not in message:
                 return None
             
+            # Skip messages from our own bot
+            from_user = message.get('from', {})
+            if self.bot_id and from_user.get('id') == self.bot_id:
+                logger.info(f"Skipping message from our own bot (ID: {self.bot_id})")
+                return None
+            
             return TelegramMessage(
                 message_id=message['message_id'],
                 chat_id=message['chat']['id'],
