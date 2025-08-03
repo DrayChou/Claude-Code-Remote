@@ -1,0 +1,185 @@
+# Ultra Simple Architecture Configuration
+# 支持一对一和一对多的路由配置
+# 内置命令：/id, /help, /ping, /status （无需配置，自动支持）
+
+# 基本路由规则
+routes:
+  # 默认处理器
+  default: "claude"
+  
+  # 命令前缀路由（支持多出口）
+  commands:
+    "/claude":
+      handler: "claude"
+      targets: ["origin"]  # 默认原路返回
+      
+    # 不同项目的Claude命令
+    "cc.a1":
+      handler: "claude_a1"
+      targets: ["origin"]
+      
+    "cc.a2":
+      handler: "claude_a2"  
+      targets: ["origin"]
+      
+    "/gpt":
+      handler: "openai"
+      targets: ["origin"]
+      
+    "/script":
+      handler: "custom_script"
+      targets: ["origin"]
+      
+          
+    # 广播命令示例 - 一对多
+    "/all":
+      handler: "claude"
+      targets: ["origin", "telegram:123456789", "discord:general_chat", "feishu:dev_group"]
+      
+    "/dev":
+      handler: "claude_dev"
+      targets: ["origin", "telegram:dev_chat", "discord:dev_channel", "line:dev_user"]
+      
+    "/notify":
+      handler: "notification_script"
+      targets: ["telegram:admin_chat", "discord:alert_channel", "feishu:alert_group", "email:admin@company.com"]
+      
+    # 广播测试命令
+    "/broadcast":
+      handler: "claude"
+      targets: ["all_channels"]
+      
+    "/test-all":
+      handler: "claude"
+      targets: ["origin", "telegram:dev_chat", "discord:general_chat"]
+  
+  # 用户特定路由
+  users:
+    "123456789":  # VIP用户
+      handler: "claude_premium"
+      targets: ["origin"]
+    "987654321":  # 测试用户
+      handler: "claude_test"
+      targets: ["origin", "telegram:log_channel"]
+
+# 处理器配置
+handlers:
+  # 默认Claude处理器
+  claude:
+    type: "shell"
+    command: "${CLAUDE_CLI_PATH}"  # 使用环境变量中的Claude CLI路径
+    args: ["{content}", "-p"]
+    working_dir: ""  # 使用环境变量 CLAUDE_WORKING_DIR
+    timeout: 60
+    
+  # 项目A1的Claude处理器
+  claude_a1:
+    type: "shell"
+    command: "claude"
+    args: ["{content}", "-p"]
+    working_dir: "D:/Code/ProjectA1"  # A1项目目录
+    timeout: 60
+    
+  # 项目A2的Claude处理器
+  claude_a2:
+    type: "shell"
+    command: "claude"
+    args: ["{content}", "-p"]
+    working_dir: "D:/Code/ProjectA2"  # A2项目目录
+    timeout: 60
+    
+  # OpenAI处理器
+  openai:
+    type: "api"
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-4"
+    working_dir: "/tmp/openai_workspace"
+    timeout: 30
+    
+  # 自定义脚本处理器
+  custom_script:
+    type: "shell"
+    command: "python"
+    args: ["./scripts/custom.py", "{content}"]
+    working_dir: "/path/to/scripts"
+    timeout: 45
+    
+  # VIP Claude（更长超时，特殊工作目录）
+  claude_premium:
+    type: "shell"
+    command: "claude"
+    args: ["{content}", "-p", "--model", "claude-3-opus"]
+    working_dir: "/vip/workspace"
+    timeout: 120
+    
+  # 开发环境Claude
+  claude_dev:
+    type: "shell"
+    command: "claude"
+    args: ["{content}", "-p"]
+    working_dir: "/dev/project"
+    timeout: 60
+    
+  # 测试环境Claude
+  claude_test:
+    type: "shell"
+    command: "claude"
+    args: ["{content}", "-p", "--test-mode"]
+    working_dir: "/test/sandbox"
+    timeout: 30
+    
+  # 通知脚本
+  notification_script:
+    type: "shell"
+    command: "python"
+    args: ["./scripts/notify.py", "{content}"]
+    working_dir: "/scripts"
+    timeout: 15
+
+# 平台配置
+platforms:
+  telegram:
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    allowed_user_ids: [123456789, 987654321]
+    allowed_chat_ids: [-1001234567890]
+    poll_interval: 2
+    http_proxy: "${HTTP_PROXY}"
+    
+  line:
+    channel_secret: "${LINE_CHANNEL_SECRET}"
+    channel_access_token: "${LINE_CHANNEL_ACCESS_TOKEN}"
+    
+  feishu:
+    app_id: "${FEISHU_APP_ID}"
+    app_secret: "${FEISHU_APP_SECRET}"
+    
+  discord:
+    bot_token: "${DISCORD_BOT_TOKEN}"
+    allowed_user_ids: []  # Discord用户ID列表
+    allowed_channel_ids: []  # Discord频道ID列表
+    allowed_guild_ids: []  # Discord服务器ID列表
+    poll_interval: 3  # Discord rate limit更严格，增加间隔
+    
+  
+# 特殊目标别名（方便配置）
+target_aliases:
+  admin_chat: "telegram:123456789"
+  dev_group: "feishu:group_123"
+  dev_chat: "telegram:-1001234567890"
+  dev_user: "line:user_456"
+  log_channel: "telegram:-1001111111111"
+  alert_group: "feishu:alert_123"
+  
+  # Discord 别名
+  general_chat: "discord:1234567890123456789"  # Discord频道ID示例
+  dev_channel: "discord:9876543210987654321"
+  alert_channel: "discord:1111222233334444555"
+  
+  # 特殊组合别名
+  all_channels: ["telegram:dev_chat", "discord:general_chat", "feishu:dev_group"]
+
+# 全局设置
+global:
+  default_timeout: 60
+  max_message_length: 4096
+  log_level: "INFO"
