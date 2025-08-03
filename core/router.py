@@ -409,8 +409,11 @@ class MessageRouter:
                 # Return final response
                 final_response = ''.join(assistant_response_parts)
                 if final_response:
-                    return self._clean_response_content(final_response)
+                    cleaned_response = self._clean_response_content(final_response)
+                    print(f"STREAMING RESULT: Returning final response (length: {len(cleaned_response)}): {cleaned_response[:100]}...")
+                    return cleaned_response
                 else:
+                    print(f"STREAMING RESULT: No response received from Claude")
                     return "No response received from Claude"
             
             else:
