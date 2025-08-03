@@ -58,11 +58,39 @@ class TelegramAdapter(PlatformAdapter):
             }
             logger.info(f"Using HTTP proxy: {config['http_proxy']}")
         
+        # Get bot information for mention detection
+        self.bot_id = None
+        self.bot_username = None
+        self._get_bot_info()
+        
         logger.info(f"Telegram adapter initialized")
+        if self.bot_username:
+            logger.info(f"Bot username: @{self.bot_username}")
         if self.allowed_user_ids:
             logger.info(f"Allowed user IDs: {self.allowed_user_ids}")
         if self.allowed_chat_ids:
             logger.info(f"Allowed chat IDs: {self.allowed_chat_ids}")
+    
+    def _get_bot_info(self):
+        """Get bot information from Telegram API"""
+        try:
+            url = f"{self.api_base}/getMe"
+            response = requests.get(url, proxies=self.proxies, verify=False, timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('ok'):
+                    bot_info = result['result']
+                    self.bot_id = bot_info.get('id')
+                    self.bot_username = bot_info.get('username')
+                    logger.info(f"Bot info retrieved: ID={self.bot_id}, username=@{self.bot_username}")
+                else:
+                    logger.error(f"Failed to get bot info: {result}")
+            else:
+                logger.error(f"HTTP error getting bot info: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Error getting bot info: {e}")
     
     async def listen(self):
         """Listen for Telegram messages - main polling loop"""
@@ -181,8 +209,17 @@ class TelegramAdapter(PlatformAdapter):
         try:
             logger.info(f"Processing message from @{message.from_username} (ID:{message.from_user_id}): {message.text[:50]}...")
             
-            # Check authorization for non-builtin commands
-            command = message.text.lower().strip()
+            # Check if this is a group chat and if bot is mentioned
+            processed_text = message.text
+            if message.chat_id != message.from_user_id:  # Group chat
+                if not self._is_bot_mentioned(message.text):
+                    logger.debug(f"Bot not mentioned in group chat, ignoring message")
+                    return
+                # Remove bot mention from text
+                processed_text = self._remove_bot_mentions(message.text)
+            
+            # Check authorization for non-builtin commands  
+            command = processed_text.lower().strip()
             builtin_commands = ['/id', 'id', '#id', '/help', 'help', '#help', '/ping', 'ping', '#ping', '/status', 'status', '#status']
             
             if command not in builtin_commands and not self.is_authorized(message):
@@ -190,10 +227,39 @@ class TelegramAdapter(PlatformAdapter):
                 return  # Silent ignore
             
             # Process through router (router will handle builtin commands)
-            await self.on_message("telegram", str(message.from_user_id), str(message.chat_id), message.text)
+            await self.on_message("telegram", str(message.from_user_id), str(message.chat_id), processed_text)
                 
         except Exception as e:
             logger.error(f"Error processing Telegram message: {e}")
+    
+    def _is_bot_mentioned(self, text: str) -> bool:
+        """Check if the bot is mentioned in the message"""
+        if not self.bot_username:
+            return True  # If we can't determine bot username, process all messages
+        
+        # Check for @username mention
+        username_pattern = f"@{self.bot_username}"
+        if username_pattern.lower() in text.lower():
+            return True
+        
+        # Check for reply to bot (would need message reply info from Telegram API)
+        # For now, we only check username mentions
+        return False
+    
+    def _remove_bot_mentions(self, text: str) -> str:
+        """Remove bot mentions from message text"""
+        if not self.bot_username:
+            return text
+        
+        # Remove @username mentions (case insensitive)
+        import re
+        pattern = f"@{re.escape(self.bot_username)}"
+        cleaned_text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
+        # Clean up extra whitespace
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+        
+        return cleaned_text
     
     def _get_username(self, user_id: str) -> Optional[str]:
         """Get username for user ID (used by router for builtin commands)"""

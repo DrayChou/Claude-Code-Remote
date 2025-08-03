@@ -58,18 +58,73 @@ class DiscordAdapter(PlatformAdapter):
             logger.info(f"Discord proxy config: {self.proxy_config}, SSL verify: {self.ssl_verify}")
             logger.info("Proxy detected, disabling SSL verification for Discord")
         
+        # Bot information for mention detection
+        self.bot_id = None
+        self.bot_username = None
+        self._get_bot_info()
+        
         # Gateway for real-time events (optional)
         self.gateway_url = None
         self.sequence_number = None
         self.session_id = None
         
         logger.info(f"Discord adapter initialized")
+        if self.bot_id:
+            logger.info(f"Bot ID: {self.bot_id}, username: {self.bot_username}")
         if self.allowed_user_ids:
             logger.info(f"Allowed user IDs: {self.allowed_user_ids}")
         if self.allowed_channel_ids:
             logger.info(f"Allowed channel IDs: {self.allowed_channel_ids}")
         if self.allowed_guild_ids:
             logger.info(f"Allowed guild IDs: {self.allowed_guild_ids}")
+    
+    def _get_bot_info(self):
+        """Get bot information from Discord API"""
+        try:
+            import asyncio
+            
+            # Create a temporary event loop if needed
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Run the async method
+            loop.run_until_complete(self._fetch_bot_info())
+            
+        except Exception as e:
+            logger.error(f"Error getting Discord bot info: {e}")
+    
+    async def _fetch_bot_info(self):
+        """Async method to fetch bot info from Discord API"""
+        try:
+            url = f"{self.api_base}/users/@me"
+            headers = {
+                'Authorization': f'Bot {self.bot_token}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Create connector with proxy and SSL settings
+            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
+            timeout = aiohttp.ClientTimeout(total=10)
+            
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                kwargs = {'headers': headers}
+                if self.proxy_config:
+                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
+                
+                async with session.get(url, **kwargs) as response:
+                    if response.status == 200:
+                        bot_info = await response.json()
+                        self.bot_id = bot_info.get('id')
+                        self.bot_username = bot_info.get('username')
+                        logger.info(f"Discord bot info retrieved: ID={self.bot_id}, username={self.bot_username}")
+                    else:
+                        logger.error(f"Discord API error getting bot info: {response.status} - {await response.text()}")
+                        
+        except Exception as e:
+            logger.error(f"Error fetching Discord bot info: {e}")
     
     async def listen(self):
         """Listen for Discord messages - polling method"""
@@ -166,7 +221,12 @@ class DiscordAdapter(PlatformAdapter):
             if message_data.get('author', {}).get('bot', False):
                 return None
             
-            # Clean Discord formatting from content
+            # Check if bot is mentioned (only process if mentioned)
+            if not self._is_bot_mentioned_in_discord(message_data['content']):
+                logger.debug(f"Bot not mentioned, ignoring Discord message")
+                return None
+            
+            # Clean Discord formatting from content (including bot mentions)
             cleaned_content = self._clean_discord_content(message_data['content'])
             
             return DiscordMessage(
@@ -180,6 +240,20 @@ class DiscordAdapter(PlatformAdapter):
         except Exception as e:
             logger.error(f"Failed to parse Discord message: {e}")
             return None
+    
+    def _is_bot_mentioned_in_discord(self, content: str) -> bool:
+        """Check if the bot is mentioned in Discord message"""
+        if not self.bot_id:
+            return True  # If we can't determine bot ID, process all messages
+        
+        import re
+        
+        # Check for direct mention: <@bot_id> or <@!bot_id>
+        mention_pattern = f"<@!?{self.bot_id}>"
+        if re.search(mention_pattern, content):
+            return True
+        
+        return False
     
     def _clean_discord_content(self, content: str) -> str:
         """Clean Discord-specific formatting from message content"""
