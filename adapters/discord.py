@@ -400,15 +400,15 @@ class DiscordAdapter(PlatformAdapter):
             author = message_data.get('author', {})
             author_id = author.get('id')
             
-            logger.debug(f"DISCORD PARSE: Message from {author.get('username', 'unknown')} (ID:{author_id}): {content[:50]}...")
+            logger.info(f"DISCORD PARSE: Message from {author.get('username', 'unknown')} (ID:{author_id}): {content[:50]}...")
             
             if not content:
-                logger.debug(f"DISCORD PARSE: No content, skipping")
+                logger.info(f"DISCORD PARSE: No content, skipping")
                 return None
             
             # Skip bot messages
             if author.get('bot', False):
-                logger.debug(f"DISCORD PARSE: Skipping bot message (bot=True)")
+                logger.info(f"DISCORD PARSE: Skipping bot message (bot=True)")
                 return None
             
             # Also skip messages from our own bot (double check)
@@ -430,7 +430,7 @@ class DiscordAdapter(PlatformAdapter):
             if not self._is_bot_mentioned_in_discord(content):
                 # If not mentioned, only process if user/channel is specifically allowed
                 if not self._is_authorized_without_mention(message_obj):
-                    logger.debug(f"DISCORD PARSE: Bot not mentioned and not from authorized user/channel: {content[:50]}")
+                    logger.info(f"DISCORD PARSE: Bot not mentioned and not from authorized user/channel: {content[:50]}")
                     return None
             
             # Clean Discord formatting from content (including bot mentions)
@@ -439,7 +439,7 @@ class DiscordAdapter(PlatformAdapter):
             # Update the message object with cleaned content
             message_obj.content = cleaned_content
             
-            logger.debug(f"DISCORD PARSE: Successfully parsed message from {message_obj.author_username}")
+            logger.info(f"DISCORD PARSE: Successfully parsed message from {message_obj.author_username}")
             return message_obj
         except Exception as e:
             logger.error(f"Failed to parse Discord message: {e}")
