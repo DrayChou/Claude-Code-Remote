@@ -151,6 +151,9 @@ class DiscordAdapter(PlatformAdapter):
                         
         except Exception as e:
             logger.error(f"Failed to get Discord messages: {e}")
+            logger.error(f"Exception type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return []
     
     def parse_message(self, message_data: Dict[str, Any]) -> Optional[DiscordMessage]:
@@ -163,10 +166,13 @@ class DiscordAdapter(PlatformAdapter):
             if message_data.get('author', {}).get('bot', False):
                 return None
             
+            # Clean Discord formatting from content
+            cleaned_content = self._clean_discord_content(message_data['content'])
+            
             return DiscordMessage(
                 message_id=message_data['id'],
                 channel_id=message_data['channel_id'],
-                content=message_data['content'],
+                content=cleaned_content,
                 author_id=message_data['author']['id'],
                 author_username=message_data['author'].get('username', 'unknown'),
                 guild_id=message_data.get('guild_id')
@@ -174,6 +180,27 @@ class DiscordAdapter(PlatformAdapter):
         except Exception as e:
             logger.error(f"Failed to parse Discord message: {e}")
             return None
+    
+    def _clean_discord_content(self, content: str) -> str:
+        """Clean Discord-specific formatting from message content"""
+        import re
+        
+        # Remove user mentions: <@123456> or <@!123456>
+        content = re.sub(r'<@!?\d+>', '', content)
+        
+        # Remove role mentions: <@&123456>
+        content = re.sub(r'<@&\d+>', '', content)
+        
+        # Remove channel mentions: <#123456>
+        content = re.sub(r'<#\d+>', '', content)
+        
+        # Remove custom emoji: <:name:123456> or <a:name:123456>
+        content = re.sub(r'<a?:[^:]+:\d+>', '', content)
+        
+        # Clean up extra whitespace
+        content = re.sub(r'\s+', ' ', content).strip()
+        
+        return content
     
     async def process_discord_message(self, message: DiscordMessage):
         """Process individual Discord message"""
@@ -246,6 +273,9 @@ class DiscordAdapter(PlatformAdapter):
                         
         except Exception as e:
             logger.error(f"Error sending Discord message: {e}")
+            logger.error(f"Exception type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
     
     async def edit_message_plain(self, channel_id: str, message_id: str, content: str) -> bool:
@@ -282,6 +312,9 @@ class DiscordAdapter(PlatformAdapter):
                         
         except Exception as e:
             logger.error(f"Error editing Discord message: {e}")
+            logger.error(f"Exception type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
     def split_message(self, text: str) -> List[str]:
