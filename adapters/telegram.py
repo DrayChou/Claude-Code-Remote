@@ -106,14 +106,23 @@ class TelegramAdapter(PlatformAdapter):
                     logger.info(f"Received {len(updates)} updates")
                     
                     for update in updates:
+                        # Check if update was already processed by update_id
+                        update_id = update.get('update_id')
+                        if update_id and self.is_message_processed(f"update_{update_id}"):
+                            logger.info(f"DUPLICATE UPDATE: Update {update_id} already processed, skipping")
+                            continue
+                        
                         message = self.parse_message(update)
                         if message:
-                            # Check if message already processed
+                            # Double check: also check by message_id
                             if self.is_message_processed(str(message.message_id)):
-                                logger.debug(f"Message {message.message_id} already processed, skipping")
+                                logger.info(f"DUPLICATE MESSAGE: Message {message.message_id} already processed, skipping")
                                 continue
                                 
-                            # Mark as processed before processing to avoid duplicates
+                            # Mark both update_id and message_id as processed
+                            logger.info(f"PROCESSING NEW MESSAGE: Update {update_id}, Message ID {message.message_id}, content: {message.text[:50]}")
+                            if update_id:
+                                self.mark_message_processed(f"update_{update_id}")
                             self.mark_message_processed(str(message.message_id))
                             
                             # Process message through router
@@ -159,9 +168,9 @@ class TelegramAdapter(PlatformAdapter):
             
             # 使用代理时禁用SSL验证
             ssl_verify = not bool(self.proxies)
-            logger.info(f"Proxy config: {self.proxies}, SSL verify: {ssl_verify}")
+            logger.debug(f"Getting updates with offset: {self.last_update_id + 1}")
             if not ssl_verify:
-                logger.info("Proxy detected, disabling SSL verification")
+                logger.debug("Proxy detected, disabling SSL verification")
             
             response = requests.get(
                 url, 
@@ -176,14 +185,23 @@ class TelegramAdapter(PlatformAdapter):
             if data.get('ok'):
                 updates = data.get('result', [])
                 if updates:
-                    self.last_update_id = updates[-1]['update_id']
+                    new_last_update_id = updates[-1]['update_id']
+                    logger.info(f"Received {len(updates)} updates, updating last_update_id from {self.last_update_id} to {new_last_update_id}")
+                    self.last_update_id = new_last_update_id
                 return updates
             else:
                 logger.error(f"Telegram API error: {data}")
                 return []
                 
         except requests.RequestException as e:
-            logger.error(f"Failed to get Telegram updates: {e}")
+            # 特别处理409冲突错误
+            if "409" in str(e):
+                logger.error(f"Telegram 409 Conflict detected: {e}")
+                logger.warning("Another bot instance may be running. Current offset will be incremented to avoid duplicate processing.")
+                # 增加offset以跳过可能的重复消息
+                self.last_update_id += 1
+            else:
+                logger.error(f"Failed to get Telegram updates: {e}")
             return []
         except Exception as e:
             logger.error(f"Error processing Telegram updates: {e}")
@@ -457,8 +475,10 @@ class TelegramAdapter(PlatformAdapter):
     async def start_streaming_response(self, chat_id: str, initial_message: str = "🤔 正在思考...") -> Optional[StreamingContext]:
         """Start streaming response for Telegram"""
         try:
+            logger.info(f"STREAMING START: Starting streaming response for chat {chat_id}")
             message_id = self.send_message_plain(int(chat_id), initial_message)
             if message_id:
+                logger.info(f"STREAMING START: Initial message sent successfully, ID: {message_id}")
                 return StreamingContext(
                     chat_id=chat_id,
                     message_id=str(message_id),

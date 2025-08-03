@@ -477,6 +477,8 @@ class MessageRouter:
                     json_data.get('message') and 
                     json_data['message'].get('content')):
                     
+                    # 清空之前的部分，Claude 流式输出每次都是完整内容
+                    assistant_response_parts.clear()
                     for content in json_data['message']['content']:
                         if content.get('type') == 'text' and content.get('text'):
                             assistant_response_parts.append(content['text'])
@@ -490,7 +492,7 @@ class MessageRouter:
             except json.JSONDecodeError:
                 continue
         
-        # 优先使用累积的助手消息，如果没有则使用最终结果
+        # 优先使用累积的助手消息（最新的完整内容），如果没有则使用最终结果
         if assistant_response_parts:
             assistant_response = ''.join(assistant_response_parts)
         elif final_result:

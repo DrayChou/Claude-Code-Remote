@@ -34,7 +34,7 @@ routes:
     # 广播命令示例 - 一对多
     "/all":
       handler: "claude"
-      targets: ["origin", "telegram:123456789", "discord:general_chat", "feishu:dev_group"]
+      targets: ["origin", "discord:733691253492809731"]
       
     "/dev":
       handler: "claude_dev"
@@ -156,7 +156,7 @@ platforms:
   discord:
     bot_token: "${DISCORD_BOT_TOKEN}"
     allowed_user_ids: []  # Discord用户ID列表
-    allowed_channel_ids: []  # Discord频道ID列表
+    allowed_channel_ids: [733691253492809731]  # Discord频道ID列表
     allowed_guild_ids: []  # Discord服务器ID列表
     poll_interval: 3  # Discord rate limit更严格，增加间隔
     
@@ -170,10 +170,10 @@ target_aliases:
   log_channel: "telegram:-1001111111111"
   alert_group: "feishu:alert_123"
   
-  # Discord 别名
-  general_chat: "discord:1234567890123456789"  # Discord频道ID示例
-  dev_channel: "discord:9876543210987654321"
-  alert_channel: "discord:1111222233334444555"
+  # Discord 别名 - 使用实际的频道ID
+  general_chat: "discord:733691253492809731"  # 实际的Discord频道ID
+  dev_channel: "discord:733691253492809731"   # 暂时使用同一个频道
+  alert_channel: "discord:733691253492809731" # 暂时使用同一个频道
   
   # 特殊组合别名
   all_channels: ["telegram:dev_chat", "discord:general_chat", "feishu:dev_group"]

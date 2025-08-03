@@ -119,6 +119,8 @@ class PlatformAdapter(ABC):
     async def on_message(self, platform: str, user_id: str, chat_id: str, content: str):
         """Universal message handler - called when message is received"""
         try:
+            response = None
+            
             # Check if streaming is supported and network is healthy
             force_degraded_mode = getattr(self, 'force_degraded_mode', False)
             
@@ -128,11 +130,12 @@ class PlatformAdapter(ABC):
                     if hasattr(self.router, 'process_with_streaming'):
                         response = await self.router.process_with_streaming(platform, user_id, chat_id, content, self)
                         if response:
+                            print(f"Streaming mode succeeded, sending to {len(response.targets)} targets")
                             # Streaming mode handled the response, send to other targets if any
                             for target in response.targets:
                                 if target != f"{platform}:{chat_id}":  # Skip origin target (already handled by streaming)
                                     await self.send_to_target(target, response.content)
-                            return
+                            return  # Successfully processed with streaming
                 except Exception as e:
                     print(f"Streaming mode failed, falling back to normal mode: {e}")
                     # Enable degraded mode temporarily after streaming failure
@@ -141,12 +144,15 @@ class PlatformAdapter(ABC):
                     import asyncio
                     asyncio.create_task(self._re_enable_streaming())
             
-            # Fall back to normal processing (degraded mode)
-            response = await self.router.process(platform, user_id, chat_id, content)
-            
-            # Send response to all targets
-            for target in response.targets:
-                await self.send_to_target(target, response.content)
+            # Fall back to normal processing (degraded mode) only if streaming didn't succeed
+            if not response:
+                print(f"Using normal processing mode for message")
+                response = await self.router.process(platform, user_id, chat_id, content)
+                
+                # Send response to all targets
+                print(f"Normal mode: sending to {len(response.targets)} targets")
+                for target in response.targets:
+                    await self.send_to_target(target, response.content)
                 
         except Exception as e:
             error_msg = f"Error processing message: {str(e)}"
@@ -173,7 +179,7 @@ class PlatformAdapter(ABC):
             if not adapter:
                 raise ValueError(f"No adapter found for platform: {platform}")
             
-            # Send message
+            # Send message directly without streaming to avoid duplicate initial messages
             await adapter.send_message(chat_id, content)
             
         except Exception as e:
