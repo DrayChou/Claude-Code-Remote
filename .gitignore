@@ -194,3 +194,4 @@ test_*.env
 # Session data
 session_*.json
 processed_messages.json
+processed_messages_*.json

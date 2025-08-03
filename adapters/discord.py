@@ -82,49 +82,36 @@ class DiscordAdapter(PlatformAdapter):
         """Get bot information from Discord API"""
         try:
             import asyncio
+            import threading
+            import requests
             
-            # Create a temporary event loop if needed
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            # Run the async method
-            loop.run_until_complete(self._fetch_bot_info())
-            
-        except Exception as e:
-            logger.error(f"Error getting Discord bot info: {e}")
-    
-    async def _fetch_bot_info(self):
-        """Async method to fetch bot info from Discord API"""
-        try:
+            # Use synchronous requests instead of async to avoid event loop issues
             url = f"{self.api_base}/users/@me"
             headers = {
                 'Authorization': f'Bot {self.bot_token}',
                 'Content-Type': 'application/json'
             }
             
-            # Create connector with proxy and SSL settings
-            connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
-            timeout = aiohttp.ClientTimeout(total=10)
+            # Prepare proxies for requests library
+            proxies = {}
+            if self.proxy_config:
+                proxies = {
+                    'http': self.proxy_config.get('http'),
+                    'https': self.proxy_config.get('https')
+                }
             
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                kwargs = {'headers': headers}
-                if self.proxy_config:
-                    kwargs['proxy'] = self.proxy_config.get('https', self.proxy_config.get('http'))
+            response = requests.get(url, headers=headers, proxies=proxies, verify=self.ssl_verify, timeout=10)
+            
+            if response.status_code == 200:
+                bot_info = response.json()
+                self.bot_id = bot_info.get('id')
+                self.bot_username = bot_info.get('username')
+                logger.info(f"Discord bot info retrieved: ID={self.bot_id}, username={self.bot_username}")
+            else:
+                logger.error(f"Discord API error getting bot info: {response.status_code} - {response.text}")
                 
-                async with session.get(url, **kwargs) as response:
-                    if response.status == 200:
-                        bot_info = await response.json()
-                        self.bot_id = bot_info.get('id')
-                        self.bot_username = bot_info.get('username')
-                        logger.info(f"Discord bot info retrieved: ID={self.bot_id}, username={self.bot_username}")
-                    else:
-                        logger.error(f"Discord API error getting bot info: {response.status} - {await response.text()}")
-                        
         except Exception as e:
-            logger.error(f"Error fetching Discord bot info: {e}")
+            logger.error(f"Error getting Discord bot info: {e}")
     
     async def listen(self):
         """Listen for Discord messages - polling method"""
@@ -145,6 +132,15 @@ class DiscordAdapter(PlatformAdapter):
                         for message_data in reversed(messages):  # Process in chronological order
                             message = self.parse_message(message_data)
                             if message:
+                                # Check if message already processed
+                                if self.is_message_processed(message.message_id):
+                                    logger.debug(f"Discord message {message.message_id} already processed, skipping")
+                                    last_message_id = message.message_id
+                                    continue
+                                
+                                # Mark as processed before processing to avoid duplicates
+                                self.mark_message_processed(message.message_id)
+                                
                                 await self.process_discord_message(message)
                                 last_message_id = message.message_id
                             else:
@@ -189,7 +185,7 @@ class DiscordAdapter(PlatformAdapter):
             
             # Create connector with proxy and SSL settings
             connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
-            timeout = aiohttp.ClientTimeout(total=30)
+            timeout = aiohttp.ClientTimeout(total=60)  # Increase timeout to 60 seconds
             
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
                 kwargs = {'headers': headers, 'params': params}
@@ -328,7 +324,7 @@ class DiscordAdapter(PlatformAdapter):
             
             # Create connector with proxy and SSL settings
             connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
-            timeout = aiohttp.ClientTimeout(total=30)
+            timeout = aiohttp.ClientTimeout(total=60)  # Increase timeout to 60 seconds
             
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
                 kwargs = {'headers': headers, 'json': data}
@@ -369,7 +365,7 @@ class DiscordAdapter(PlatformAdapter):
             
             # Create connector with proxy and SSL settings
             connector = aiohttp.TCPConnector(ssl=self.ssl_verify)
-            timeout = aiohttp.ClientTimeout(total=30)
+            timeout = aiohttp.ClientTimeout(total=60)  # Increase timeout to 60 seconds
             
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
                 kwargs = {'headers': headers, 'json': data}

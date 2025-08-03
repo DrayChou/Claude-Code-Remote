@@ -108,6 +108,14 @@ class TelegramAdapter(PlatformAdapter):
                     for update in updates:
                         message = self.parse_message(update)
                         if message:
+                            # Check if message already processed
+                            if self.is_message_processed(str(message.message_id)):
+                                logger.debug(f"Message {message.message_id} already processed, skipping")
+                                continue
+                                
+                            # Mark as processed before processing to avoid duplicates
+                            self.mark_message_processed(str(message.message_id))
+                            
                             # Process message through router
                             await self.process_telegram_message(message)
                         else:
