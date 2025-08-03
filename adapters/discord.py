@@ -396,36 +396,51 @@ class DiscordAdapter(PlatformAdapter):
     def parse_message(self, message_data: Dict[str, Any]) -> Optional[DiscordMessage]:
         """Parse Discord message from API data"""
         try:
-            if not message_data.get('content'):
+            content = message_data.get('content', '')
+            author = message_data.get('author', {})
+            author_id = author.get('id')
+            
+            logger.debug(f"DISCORD PARSE: Message from {author.get('username', 'unknown')} (ID:{author_id}): {content[:50]}...")
+            
+            if not content:
+                logger.debug(f"DISCORD PARSE: No content, skipping")
                 return None
             
             # Skip bot messages
-            author = message_data.get('author', {})
             if author.get('bot', False):
-                logger.debug(f"Skipping bot message (bot=True)")
+                logger.debug(f"DISCORD PARSE: Skipping bot message (bot=True)")
                 return None
             
             # Also skip messages from our own bot (double check)
-            if self.bot_id and author.get('id') == self.bot_id:
-                logger.info(f"Skipping message from our own bot (ID: {self.bot_id})")
+            if self.bot_id and author_id == self.bot_id:
+                logger.info(f"DISCORD PARSE: Skipping message from our own bot (ID: {self.bot_id})")
                 return None
             
-            # Check if bot is mentioned (only process if mentioned)
-            if not self._is_bot_mentioned_in_discord(message_data['content']):
-                logger.debug(f"Bot not mentioned, ignoring Discord message")
-                return None
-            
-            # Clean Discord formatting from content (including bot mentions)
-            cleaned_content = self._clean_discord_content(message_data['content'])
-            
-            return DiscordMessage(
+            # For Discord, we can be more flexible - either mentioned or in allowed channels
+            # Check if bot is mentioned OR if this is from an allowed channel/user
+            message_obj = DiscordMessage(
                 message_id=message_data['id'],
                 channel_id=message_data['channel_id'],
-                content=cleaned_content,
-                author_id=message_data['author']['id'],
-                author_username=message_data['author'].get('username', 'unknown'),
+                content=content,
+                author_id=author_id,
+                author_username=author.get('username', 'unknown'),
                 guild_id=message_data.get('guild_id')
             )
+            
+            if not self._is_bot_mentioned_in_discord(content):
+                # If not mentioned, only process if user/channel is specifically allowed
+                if not self._is_authorized_without_mention(message_obj):
+                    logger.debug(f"DISCORD PARSE: Bot not mentioned and not from authorized user/channel: {content[:50]}")
+                    return None
+            
+            # Clean Discord formatting from content (including bot mentions)
+            cleaned_content = self._clean_discord_content(content)
+            
+            # Update the message object with cleaned content
+            message_obj.content = cleaned_content
+            
+            logger.debug(f"DISCORD PARSE: Successfully parsed message from {message_obj.author_username}")
+            return message_obj
         except Exception as e:
             logger.error(f"Failed to parse Discord message: {e}")
             return None
@@ -493,6 +508,24 @@ class DiscordAdapter(PlatformAdapter):
             return True
         
         # Check channel ID
+        if self.allowed_channel_ids and message.channel_id in self.allowed_channel_ids:
+            return True
+        
+        # Check guild ID
+        if self.allowed_guild_ids and message.guild_id and message.guild_id in self.allowed_guild_ids:
+            return True
+        
+        return False
+    
+    def _is_authorized_without_mention(self, message: DiscordMessage) -> bool:
+        """Check if user/channel is authorized even without bot mention"""
+        # For messages without mentions, we're more strict - require explicit authorization
+        
+        # Check user ID
+        if self.allowed_user_ids and message.author_id in self.allowed_user_ids:
+            return True
+        
+        # Check channel ID  
         if self.allowed_channel_ids and message.channel_id in self.allowed_channel_ids:
             return True
         
