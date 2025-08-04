@@ -129,27 +129,21 @@ class MessageRouter:
         routes = self.config.get("routes", {})
         handlers = self.config.get("handlers", {})
         
-        # Check command-based routing (支持新格式)
+        # Check command-based routing (支持新格式和通配符)
         commands = routes.get("commands", {})
+        
+        # First, try exact matches
         for command, route_config in commands.items():
-            if content.startswith(command):
-                # Handle both old and new format
-                if isinstance(route_config, str):
-                    # Old format: "/cmd": "handler_name"
-                    handler_name = route_config
-                    targets = ["origin"]
-                else:
-                    # New format: "/cmd": {"handler": "name", "targets": [...]}
-                    handler_name = route_config.get("handler")
-                    targets = route_config.get("targets", ["origin"])
-                
-                handler_config = handlers.get(handler_name, {}).copy()
-                handler_config["name"] = handler_name
-                handler_config["targets"] = targets
-                
-                # Remove command from content for processing
-                clean_content = content[len(command):].strip()
-                handler_config["content"] = clean_content if clean_content else content
+            if command != "*" and self._match_command(content, command):
+                handler_config = self._build_handler_config(command, route_config, handlers, content)
+                if handler_config:
+                    return handler_config
+        
+        # Then, try wildcard match if no exact match found
+        if "*" in commands:
+            wildcard_config = commands["*"]
+            handler_config = self._build_handler_config("*", wildcard_config, handlers, content)
+            if handler_config:
                 return handler_config
         
         # Check user-specific routing (支持新格式)
@@ -545,6 +539,51 @@ class MessageRouter:
         assistant_response = self._clean_response_content(assistant_response)
         return assistant_response
     
+    def _match_command(self, content: str, command: str) -> bool:
+        """Check if content matches command pattern (supports wildcards)"""
+        if command == "*":
+            return True
+        elif command.endswith("*"):
+            # Pattern like "/cmd*" - prefix match
+            prefix = command[:-1]
+            return content.startswith(prefix)
+        elif command.startswith("*"):
+            # Pattern like "*cmd" - suffix match
+            suffix = command[1:]
+            return content.endswith(suffix)
+        else:
+            # Exact prefix match (original behavior)
+            return content.startswith(command)
+    
+    def _build_handler_config(self, command: str, route_config, handlers: dict, content: str) -> dict:
+        """Build handler configuration from route config"""
+        # Handle both old and new format
+        if isinstance(route_config, str):
+            # Old format: "/cmd": "handler_name"
+            handler_name = route_config
+            targets = ["origin"]
+        else:
+            # New format: "/cmd": {"handler": "name", "targets": [...]}
+            handler_name = route_config.get("handler")
+            targets = route_config.get("targets", ["origin"])
+        
+        if not handler_name:
+            return None
+            
+        handler_config = handlers.get(handler_name, {}).copy()
+        handler_config["name"] = handler_name
+        handler_config["targets"] = targets
+        
+        # Remove command from content for processing (except for wildcard)
+        if command == "*":
+            clean_content = content  # Keep full content for wildcard
+        else:
+            clean_content = content[len(command):].strip()
+            clean_content = clean_content if clean_content else content
+        
+        handler_config["content"] = clean_content
+        return handler_config
+    
     def _clean_response_content(self, content: str) -> str:
         """Clean response content (from original code)"""
         if not content:
@@ -567,18 +606,24 @@ class MessageRouter:
         return content if content else "Response processed but no content to display"
     
     def _determine_targets(self, platform: str, user_id: str, chat_id: str, content: str, handler_config: Dict[str, Any]) -> list[str]:
-        """Determine where to send the response"""
+        """Determine where to send the response (支持通配符和别名)"""
         # Get targets from handler config (支持一对多)
         targets = handler_config.get("targets", ["origin"])
+        print(f"DEBUG TARGET: Raw targets from config: {targets}")
         
         # 解析目标别名
         target_aliases = self.config.get("target_aliases", {})
+        print(f"DEBUG TARGET: Available aliases: {list(target_aliases.keys())}")
         resolved_targets = []
         
         for target in targets:
             if target == "origin":
                 # 原路返回
                 resolved_targets.append(f"{platform}:{chat_id}")
+            elif target == "*":
+                # 通配符 - 发送到所有已注册的平台
+                all_platform_targets = self._get_all_platform_targets(platform, chat_id)
+                resolved_targets.extend(all_platform_targets)
             elif target in target_aliases:
                 # 使用别名 - 支持数组类型别名
                 alias_value = target_aliases[target]
@@ -592,7 +637,43 @@ class MessageRouter:
                 # 直接使用目标
                 resolved_targets.append(target)
         
-        return resolved_targets
+        # 去重但保持顺序
+        unique_targets = []
+        for target in resolved_targets:
+            if target not in unique_targets:
+                unique_targets.append(target)
+        
+        print(f"DEBUG TARGET: Final resolved targets: {unique_targets}")
+        return unique_targets
+    
+    def _get_all_platform_targets(self, current_platform: str, current_chat_id: str) -> list[str]:
+        """Get all available platform targets for * wildcard"""
+        all_targets = []
+        
+        # Add current platform origin
+        all_targets.append(f"{current_platform}:{current_chat_id}")
+        
+        # Get platform configurations
+        platform_configs = self.config.get("platforms", {})
+        
+        for platform_name, config in platform_configs.items():
+            if platform_name == current_platform:
+                continue  # Skip current platform (already added)
+            
+            # Add default target for each platform
+            if platform_name == "telegram":
+                # Use first allowed user ID or current user
+                user_ids = config.get("allowed_user_ids", [])
+                if user_ids:
+                    all_targets.append(f"telegram:{user_ids[0]}")
+            elif platform_name == "discord":
+                # Use first allowed channel ID
+                channel_ids = config.get("allowed_channel_ids", [])
+                if channel_ids:
+                    all_targets.append(f"discord:{channel_ids[0]}")
+            # Add more platforms as needed
+        
+        return all_targets
     
     def _handle_builtin_commands(self, platform: str, user_id: str, chat_id: str, content: str) -> Optional[Response]:
         """Handle built-in platform commands like /id"""

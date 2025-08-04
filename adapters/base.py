@@ -131,11 +131,15 @@ class PlatformAdapter(ABC):
                         response = await self.router.process_with_streaming(platform, user_id, chat_id, content, self)
                         if response:
                             print(f"Streaming mode succeeded, sending to {len(response.targets)} targets")
+                            print(f"DEBUG: All targets: {response.targets}")
+                            print(f"DEBUG: Current origin: {platform}:{chat_id}")
                             # Send the same final response to all other targets
                             for target in response.targets:
                                 if target != f"{platform}:{chat_id}":  # Skip origin target (already handled by streaming)
                                     print(f"Sending final response to target: {target}")
                                     await self.send_to_target(target, response.content)
+                                else:
+                                    print(f"DEBUG: Skipping origin target: {target}")
                             return  # Successfully processed with streaming
                 except Exception as e:
                     print(f"Streaming mode failed, falling back to normal mode: {e}")
@@ -186,3 +190,5 @@ class PlatformAdapter(ABC):
             
         except Exception as e:
             print(f"Error sending to target {target}: {e}")
+            import traceback
+            print(f"Full traceback: {traceback.format_exc()}")

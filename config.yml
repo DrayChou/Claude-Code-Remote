@@ -52,6 +52,24 @@ routes:
     "/test-all":
       handler: "claude"
       targets: ["origin", "telegram:dev_chat", "discord:general_chat"]
+    
+    # 通配符路由示例
+    "*":
+      handler: "claude"
+      targets: ["origin"]  # 捕获所有未匹配的命令
+      
+    "/help*":
+      handler: "claude"
+      targets: ["origin"]  # 匹配 /help, /help-me, /help123 等
+      
+    "*debug":
+      handler: "claude_dev"
+      targets: ["origin", "telegram:dev_chat"]  # 匹配 debug, mydebug, test-debug 等
+      
+    # 通用广播命令 - 使用 * 通配符发送到所有平台
+    "/announce":
+      handler: "claude"
+      targets: ["*"]  # 使用 * 通配符自动发送到所有已注册平台
   
   # 用户特定路由
   users:
@@ -178,6 +196,9 @@ target_aliases:
   # 特殊组合别名
   all_channels: ["telegram:dev_chat", "discord:general_chat", "feishu:dev_group"]
   all_platforms: ["telegram:213800199", "discord:733691253492809731"]
+  
+  # 通配符别名 - 等同于使用 "*" 通配符
+  broadcast_all: "*"
 
 # 全局设置
 global:
